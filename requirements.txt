@@ -1,0 +1,6 @@
+requests
+opencv-python
+numpy
+onnxruntime
+adafruit-circuitpython-pca9685
+adafruit-blinka

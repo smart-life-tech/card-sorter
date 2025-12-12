@@ -1,0 +1,50 @@
+app:
+  mode: price  # price | color | mixed
+  price_threshold_usd: 0.25
+  price_sources:
+    primary: scryfall
+    fallback: tcgplayer
+    cache_ttl_hours: 24
+  logging:
+    csv_dir: /home/pi/card-sorter/logs
+    rotate_daily: true
+  persistence_file: /home/pi/card-sorter/config/state.json
+
+recognition:
+  model_path: /home/pi/card-sorter/models/card_recognizer.onnx
+  label_map_path: /home/pi/card-sorter/models/label_map.json
+  card_index_path: /home/pi/card-sorter/models/card_index.json
+
+hardware:
+  camera:
+    resolution: [1920, 1080]
+    iso: auto
+    white_balance: auto
+    shutter: auto
+  servo_driver:
+    type: PCA9685
+    address: 0x40
+    pwm_freq_hz: 50
+    supply_voltage_v: 5.5
+    channel_map:
+      price_bin: 0
+      combined_bin: 1
+      white_blue_bin: 2
+      black_bin: 3
+      red_bin: 4
+      green_bin: 5
+      reserved_future: [6, 7]
+    angles:
+      price_bin: {open_deg: 110, closed_deg: 60}
+      combined_bin: {open_deg: 120, closed_deg: 70}
+      white_blue_bin: {open_deg: 115, closed_deg: 65}
+      black_bin: {open_deg: 110, closed_deg: 60}
+      red_bin: {open_deg: 120, closed_deg: 70}
+      green_bin: {open_deg: 115, closed_deg: 65}
+
+routing:
+  low_confidence_retry: 1
+  low_confidence_route: combined_bin
+  disabled_bin_route: combined_bin
+  unpriced_route: combined_bin
+  unrecognized_route: combined_bin
