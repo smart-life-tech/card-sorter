@@ -1,23 +1,25 @@
 app:
   mode: price  # price | color | mixed
+  mock_mode: false  # Set to true to skip hardware (camera/servo) and use mock data
   price_threshold_usd: 0.25
   price_sources:
     primary: scryfall
     fallback: tcgplayer
     cache_ttl_hours: 24
   logging:
-    csv_dir: /home/pi/card-sorter/logs
+    csv_dir: ./logs
     rotate_daily: true
-  persistence_file: /home/pi/card-sorter/config/state.json
+  persistence_file: ./config/state.json
 
 recognition:
-  model_path: /home/pi/card-sorter/models/card_recognizer.onnx
-  label_map_path: /home/pi/card-sorter/models/label_map.json
-  card_index_path: /home/pi/card-sorter/models/card_index.json
+  model_path: ./models/card_recognizer.onnx
+  label_map_path: ./models/label_map.json
+  card_index_path: ./models/card_index.json
 
 hardware:
   camera:
     resolution: [1920, 1080]
+    device_index: 0
     iso: auto
     white_balance: auto
     shutter: auto

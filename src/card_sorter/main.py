@@ -39,8 +39,13 @@ class CardSorterApp:
         self.logger = CsvLogger(self.config.logging_dir)
         logger.info(f"CSV logging to {self.config.logging_dir}")
         
-        self.camera = CameraCapture(resolution=tuple(self.config.camera_resolution))
-        logger.info(f"Camera initialized: {self.config.camera_resolution[0]}x{self.config.camera_resolution[1]}")
+        mock_str = " (MOCK MODE)" if self.config.mock_mode else ""
+        self.camera = CameraCapture(
+            device_index=self.config.camera_device_index,
+            resolution=tuple(self.config.camera_resolution),
+            mock_mode=self.config.mock_mode
+        )
+        logger.info(f"Camera initialized: {self.config.camera_resolution[0]}x{self.config.camera_resolution[1]}{mock_str}")
         
         self.recognizer = Recognizer(
             model_path=self.config.recognition_model_path,
@@ -65,8 +70,9 @@ class CardSorterApp:
             address=self.config.servo_address,
             pwm_freq_hz=self.config.pwm_freq_hz,
             supply_voltage_v=self.config.supply_voltage_v,
+            mock_mode=self.config.mock_mode,
         )
-        logger.info(f"Servo actuator ready (PCA9685 @ 0x{self.config.servo_address:02x})")
+        logger.info(f"Servo actuator ready (PCA9685 @ 0x{self.config.servo_address:02x}){mock_str}")
         
         self._lock = threading.Lock()
         self._running = False

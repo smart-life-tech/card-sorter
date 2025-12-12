@@ -48,6 +48,7 @@ class ServoAngles:
 @dataclass
 class AppConfig:
     mode: str
+    mock_mode: bool
     price_threshold_usd: float
     price_primary: str
     price_fallback: str
@@ -58,6 +59,7 @@ class AppConfig:
     recognition_label_map: Optional[str]
     recognition_card_index: Optional[str]
     camera_resolution: List[int]
+    camera_device_index: int
     servo_address: int
     pwm_freq_hz: int
     supply_voltage_v: float

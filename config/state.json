@@ -1,0 +1,9 @@
+{
+  "mode": "color",
+  "price_threshold_usd": 0.25,
+  "price_source_primary": "scryfall",
+  "price_source_fallback": "tcgplayer",
+  "disabled_bins": [],
+  "counts": {},
+  "last_bin": null
+}

@@ -23,6 +23,7 @@ def load_config(path: Path) -> AppConfig:
 
     return AppConfig(
         mode=app["mode"],
+        mock_mode=app.get("mock_mode", False),
         price_threshold_usd=float(app["price_threshold_usd"]),
         price_primary=app["price_sources"]["primary"],
         price_fallback=app["price_sources"]["fallback"],
@@ -33,6 +34,7 @@ def load_config(path: Path) -> AppConfig:
         recognition_label_map=recognition.get("label_map_path"),
         recognition_card_index=recognition.get("card_index_path"),
         camera_resolution=list(hardware["camera"]["resolution"]),
+        camera_device_index=int(hardware["camera"].get("device_index", 0)),
         servo_address=int(servo_driver["address"], 0) if isinstance(servo_driver["address"], str) else int(servo_driver["address"]),
         pwm_freq_hz=int(servo_driver["pwm_freq_hz"]),
         supply_voltage_v=float(servo_driver["supply_voltage_v"]),

@@ -14,17 +14,18 @@ except ImportError:  # pragma: no cover - hardware optional during dev
 
 
 class ServoActuator:
-    def __init__(self, channel_map: Dict[str, int], angles: Dict[str, ServoAngles], address: int = 0x40, pwm_freq_hz: int = 50, supply_voltage_v: float = 5.5) -> None:
+    def __init__(self, channel_map: Dict[str, int], angles: Dict[str, ServoAngles], address: int = 0x40, pwm_freq_hz: int = 50, supply_voltage_v: float = 5.5, mock_mode: bool = False) -> None:
         self.channel_map = channel_map
         self.angles = angles
         self.address = address
         self.pwm_freq_hz = pwm_freq_hz
         self.supply_voltage_v = supply_voltage_v
+        self.mock_mode = mock_mode
         self._pca = None
         self._init_driver()
 
     def _init_driver(self) -> None:
-        if PCA9685 is None:
+        if self.mock_mode or PCA9685 is None:
             return
         i2c = busio.I2C(board.SCL, board.SDA)
         self._pca = PCA9685(i2c, address=self.address)
@@ -40,6 +41,8 @@ class ServoActuator:
         return max(0, min(4095, duty))
 
     def move(self, bin_name: str, position: str = "open", dwell_s: float = 0.3) -> None:
+        if self.mock_mode:
+            return
         if self._pca is None:
             return
         if bin_name not in self.channel_map or bin_name not in self.angles:
