@@ -204,22 +204,54 @@ class CardSorterApp:
 
 
 def main() -> None:
-    config_path = Path(__file__).resolve().parent.parent / "config" / "default_config.yaml"
-    setup_logging(log_dir=Path.cwd() / "logs")
-    logger.info("=" * 60)
-    logger.info("Card Sorter Application Starting")
-    logger.info("=" * 60)
+    import sys
+    import io
     
-    app = CardSorterApp(config_path)
+    # Force unbuffered output
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(line_buffering=True)
+    
+    print("[START] Initializing...", flush=True)
+    sys.stdout.flush()
+    
     try:
+        config_path = Path(__file__).resolve().parent.parent / "config" / "default_config.yaml"
+        print(f"[START] Config path: {config_path}", flush=True)
+        print(f"[START] Config exists: {config_path.exists()}", flush=True)
+        
+        setup_logging(log_dir=Path.cwd() / "logs")
+        print("[START] Logging setup complete", flush=True)
+        
+        print("=" * 60, flush=True)
+        print("Card Sorter Application Starting", flush=True)
+        print("=" * 60, flush=True)
+        
+        logger.info("=" * 60)
+        logger.info("Card Sorter Application Starting")
+        logger.info("=" * 60)
+        
+        print("[START] Loading config...", flush=True)
+        app = CardSorterApp(config_path)
+        print("[START] Config loaded, launching GUI...", flush=True)
         logger.info("Launching GUI...")
+        
         launch_gui(app)
+        
     except KeyboardInterrupt:
+        print("[USER] Interrupted", flush=True)
         logger.info("Interrupted by user")
     except Exception as e:
+        print(f"[FATAL] {type(e).__name__}: {e}", flush=True)
+        import traceback
+        traceback.print_exc(file=sys.stdout)
         logger.error(f"Fatal error: {e}", exc_info=True)
     finally:
-        app.shutdown()
+        try:
+            if 'app' in locals():
+                print("[CLEANUP] Shutting down...", flush=True)
+                app.shutdown()
+        except Exception as e:
+            print(f"[CLEANUP ERROR] {e}", flush=True)
 
 
 if __name__ == "__main__":
