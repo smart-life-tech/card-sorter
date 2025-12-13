@@ -25,6 +25,7 @@ class CardSorterApp:
         self.config = load_config(config_path)
         setup_logging(log_dir=Path(self.config.logging_dir).parent)
         logger.info("Initializing Card Sorter App")
+        logger.info(f"mock_mode={self.config.mock_mode}")
         
         self.state_store = StateStore(Path(self.config.persistence_file))
         self.state = RuntimeState.from_config(self.config)
@@ -234,6 +235,7 @@ def main() -> None:
         
         print("[START] Loading config...", flush=True)
         app = CardSorterApp(config_path)
+        print(f"[START] mock_mode={app.config.mock_mode}", flush=True)
         print("[START] Config loaded, launching GUI...", flush=True)
         logger.info("Launching GUI...")
         

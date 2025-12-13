@@ -5,7 +5,7 @@
   "price_source_fallback": "tcgplayer",
   "disabled_bins": [],
   "counts": {
-    "combined_bin": 18
+    "combined_bin": 24
   },
   "last_bin": "combined_bin"
 }

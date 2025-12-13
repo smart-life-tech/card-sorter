@@ -13,7 +13,11 @@ except ImportError:  # pragma: no cover - optional heavy deps
     cv2 = None
 
 from .card_index import CardIndex
+from .logger import get_logger
 from .models import CardMetadata, CardRecognitionResult
+
+
+logger = get_logger(__name__)
 
 
 class Recognizer:
@@ -29,17 +33,27 @@ class Recognizer:
     def _load_session(self):
         if self.model_path and self.model_path.exists() and ort:
             return ort.InferenceSession(str(self.model_path))
+        if not self.model_path:
+            logger.warning("No recognition model path configured; running in recognition-disabled mode")
+        elif not self.model_path.exists():
+            logger.warning(f"Recognition model not found at {self.model_path}; running in recognition-disabled mode")
+        elif ort is None:
+            logger.warning("onnxruntime not installed; running in recognition-disabled mode")
         return None
 
     def _load_label_map(self) -> List[str]:
         if self.label_map_path and self.label_map_path.exists():
             data = json.loads(self.label_map_path.read_text(encoding="utf-8"))
             return data if isinstance(data, list) else []
+        if self.label_map_path and not self.label_map_path.exists():
+            logger.warning(f"Label map not found at {self.label_map_path}")
         return []
 
     def _load_index(self) -> Optional[CardIndex]:
         if self.card_index_path and self.card_index_path.exists():
             return CardIndex.load(self.card_index_path)
+        if self.card_index_path and not self.card_index_path.exists():
+            logger.warning(f"Card index not found at {self.card_index_path}")
         return None
 
     def recognize(self, image_path: Path) -> CardRecognitionResult:
