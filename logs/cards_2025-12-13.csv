@@ -1,0 +1,10 @@
+timestamp,name,set_code,collector_number,art_id,price_usd,price_source,bin,flags
+2025-12-13T08:56:29.900580,,,,,,,combined_bin,low_confidence;no_price_lookup
+2025-12-13T08:56:42.009899,,,,,,,combined_bin,low_confidence;no_price_lookup
+2025-12-13T08:56:42.527955,,,,,,,combined_bin,low_confidence;no_price_lookup
+2025-12-13T08:56:43.060021,,,,,,,combined_bin,low_confidence;no_price_lookup
+2025-12-13T08:56:43.569880,,,,,,,combined_bin,low_confidence;no_price_lookup
+2025-12-13T08:56:44.088124,,,,,,,combined_bin,low_confidence;no_price_lookup
+2025-12-13T08:56:44.619321,,,,,,,combined_bin,low_confidence;no_price_lookup
+2025-12-13T08:56:45.135347,,,,,,,combined_bin,low_confidence;no_price_lookup
+2025-12-13T08:56:45.651722,,,,,,,combined_bin,low_confidence;no_price_lookup

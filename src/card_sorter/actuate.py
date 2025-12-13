@@ -42,6 +42,7 @@ class ServoActuator:
 
     def move(self, bin_name: str, position: str = "open", dwell_s: float = 0.3) -> None:
         if self.mock_mode:
+            print(f"[MOCK SERVO] Bin '{bin_name}' -> {position} (mock mode, no hardware)", flush=True)
             return
         if self._pca is None:
             return

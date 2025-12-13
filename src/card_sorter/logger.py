@@ -14,13 +14,9 @@ def setup_logging(log_dir: Path | str = None, level: int = logging.INFO) -> logg
         # Console handler - unbuffered
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(level)
-        console_handler.flush_interval = 1  # Flush every message
         console_fmt = logging.Formatter("[%(asctime)s] [%(levelname)-8s] %(message)s", datefmt="%H:%M:%S")
         console_handler.setFormatter(console_fmt)
         logger.addHandler(console_handler)
-        
-        # Force unbuffered output
-        logger.propagate = True
 
         # File handler
         log_file = log_dir / "app.log"

@@ -1,6 +1,6 @@
 app:
   mode: price  # price | color | mixed
-  mock_mode: true  # Set to true to skip hardware (camera/servo) and use mock data
+  mock_mode: false  # Set to true to skip hardware (camera/servo) and use mock data
   price_threshold_usd: 0.25
   price_sources:
     primary: scryfall

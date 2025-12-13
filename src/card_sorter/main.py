@@ -187,8 +187,10 @@ class CardSorterApp:
             self._persist_state()
 
     def test_bin(self, bin_name: str) -> None:
+        print(f"[TEST] Moving servo for bin: {bin_name}", flush=True)
         logger.info(f"Testing bin: {bin_name}")
         self.actuator.move(bin_name, position="open")
+        print(f"[TEST] Servo command sent for {bin_name}", flush=True)
 
     def _bump_count(self, bin_name: str) -> None:
         self.state.counts[bin_name] = self.state.counts.get(bin_name, 0) + 1

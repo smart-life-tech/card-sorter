@@ -1,9 +1,11 @@
 {
-  "mode": "mixed",
+  "mode": "color",
   "price_threshold_usd": 2.1559633027522938,
-  "price_source_primary": "tcgplayer",
-  "price_source_fallback": "scryfall",
+  "price_source_primary": "scryfall",
+  "price_source_fallback": "tcgplayer",
   "disabled_bins": [],
-  "counts": {},
-  "last_bin": null
+  "counts": {
+    "combined_bin": 18
+  },
+  "last_bin": "combined_bin"
 }

@@ -95,8 +95,8 @@ class SorterGUI:
         self.app.toggle_bin(bin_name, enabled)
 
     def _default_trigger(self) -> bool:
-        time.sleep(0.1)
-        return False  # Don't auto-process; wait for user to click Start
+        time.sleep(0.5)
+        return True  # Process cards when Start is clicked
 
     def start_processing(self) -> None:
         if self.worker and self.worker.is_alive():
