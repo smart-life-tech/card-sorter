@@ -44,7 +44,16 @@ class Recognizer:
     def _load_label_map(self) -> List[str]:
         if self.label_map_path and self.label_map_path.exists():
             data = json.loads(self.label_map_path.read_text(encoding="utf-8"))
-            return data if isinstance(data, list) else []
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                try:
+                    # Convert mapping of index->art_id to ordered list by numeric key
+                    items = sorted(data.items(), key=lambda kv: int(kv[0]))
+                    return [v for _, v in items]
+                except Exception:
+                    return list(data.values())
+            return []
         if self.label_map_path and not self.label_map_path.exists():
             logger.warning(f"Label map not found at {self.label_map_path}")
         return []

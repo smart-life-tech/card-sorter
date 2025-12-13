@@ -1,3 +1,5 @@
 [2025-12-13 10:07:50,296] [WARNING ] card_sorter.recognize: Recognition model not found at models\card_recognizer.onnx; running in recognition-disabled mode
 [2025-12-13 10:07:50,296] [WARNING ] card_sorter.recognize: Label map not found at models\label_map.json
 [2025-12-13 10:07:50,296] [WARNING ] card_sorter.recognize: Card index not found at models\card_index.json
+[2025-12-13 10:30:27,046] [WARNING ] card_sorter.recognize: Recognition model not found at models\card_recognizer.onnx; running in recognition-disabled mode
+[2025-12-13 10:35:24,487] [WARNING ] card_sorter.recognize: Recognition model not found at models\card_recognizer.onnx; running in recognition-disabled mode
