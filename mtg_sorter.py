@@ -20,9 +20,13 @@ except Exception:
     pytesseract = None
 
 try:
-    import RPi.GPIO as GPIO  # type: ignore
+    import board
+    import busio
+    from adafruit_pca9685 import PCA9685
 except Exception:
-    GPIO = None
+    board = None
+    busio = None
+    PCA9685 = None
 
 import requests
 import tkinter as tk
@@ -34,17 +38,18 @@ from tkinter import ttk
 
 @dataclass
 class ServoConfig:
-    # GPIO pins for each bin's servo signal
-    price_bin: int = 17
-    combined_bin: int = 27
-    white_blue_bin: int = 22
-    black_bin: int = 23
-    red_bin: int = 24
-    green_bin: int = 25
-    # angles (duty cycle percents for simple PWM) for open/closed
-    open_dc: float = 7.5
-    close_dc: float = 5.0
-    freq_hz: int = 50
+    # PCA9685 channel numbers (0-15) for each bin's servo signal
+    price_bin: int = 0
+    combined_bin: int = 1
+    white_blue_bin: int = 2
+    black_bin: int = 3
+    red_bin: int = 4
+    green_bin: int = 5
+    # Servo pulse range (in microseconds): 500-2500 typical
+    # These convert to 16-bit values for PCA9685
+    pulse_open_us: int = 2000    # ~90 degrees
+    pulse_close_us: int = 1000   # ~0 degrees
+    pca_address: int = 0x40      # Default PCA9685 I2C address
 
 @dataclass
 class AppConfig:
@@ -67,50 +72,45 @@ class CardInfo:
 ################################################################################
 
 def is_rpi() -> bool:
-    return platform.system() == "Linux" and GPIO is not None
+    return platform.system() == "Linux" and board is not None
 
 
-def setup_gpio(servo_cfg: ServoConfig, mock: bool) -> Dict[str, Optional[any]]:
-    pins = {
-        "price_bin": servo_cfg.price_bin,
-        "combined_bin": servo_cfg.combined_bin,
-        "white_blue_bin": servo_cfg.white_blue_bin,
-        "black_bin": servo_cfg.black_bin,
-        "red_bin": servo_cfg.red_bin,
-        "green_bin": servo_cfg.green_bin,
-    }
-    pwm_map: Dict[str, Optional[any]] = {k: None for k in pins}
+def setup_pca9685(servo_cfg: ServoConfig, mock: bool) -> Optional[any]:
     if mock:
-        print("[MOCK GPIO] Using mock servo outputs")
-        return pwm_map
-    GPIO.setmode(GPIO.BCM)
-    for name, pin in pins.items():
-        GPIO.setup(pin, GPIO.OUT)
-        pwm = GPIO.PWM(pin, servo_cfg.freq_hz)
-        pwm.start(servo_cfg.close_dc)
-        pwm_map[name] = pwm
-    return pwm_map
+        print(f"[MOCK PCA9685] Using mock servo outputs (address 0x{servo_cfg.pca_address:02x})")
+        return None
+    try:
+        i2c = busio.I2C(board.SCL, board.SDA)
+        pca = PCA9685(i2c, address=servo_cfg.pca_address)
+        pca.frequency = 50  # Standard servo frequency: 50 Hz
+        print(f"[PCA9685] Initialized at 0x{servo_cfg.pca_address:02x}, 50 Hz")
+        return pca
+    except Exception as e:
+        print(f"[PCA9685] Failed to initialize: {e}")
+        return None
 
 
-def move_servo(pwm_map: Dict[str, Optional[any]], name: str, open_dc: float, close_dc: float, dwell_s: float = 0.3, mock: bool = True) -> None:
-    if mock or pwm_map.get(name) is None:
-        print(f"[MOCK SERVO] {name} -> open ({open_dc}%) then close ({close_dc}%)")
+def move_servo(pca: Optional[any], name: str, channel: int, pulse_open_us: int, pulse_close_us: int, dwell_s: float = 0.3, mock: bool = True) -> None:
+    if mock or pca is None:
+        print(f"[MOCK SERVO] {name} (ch {channel}) -> open ({pulse_open_us}µs) then close ({pulse_close_us}µs)")
         time.sleep(dwell_s)
         return
-    pwm = pwm_map[name]
-    pwm.ChangeDutyCycle(open_dc)
+    # Convert microseconds to 16-bit value (4096 steps per 20ms = 20000µs)
+    # PCA9685 runs at 50 Hz (20ms period), 4096 steps per period
+    # 1µs = 4096 / 20000 ≈ 0.2048 steps
+    open_val = int(pulse_open_us * 4096 / 20000)
+    close_val = int(pulse_close_us * 4096 / 20000)
+    pca.channels[channel].duty_cycle = open_val
     time.sleep(dwell_s)
-    pwm.ChangeDutyCycle(close_dc)
+    pca.channels[channel].duty_cycle = close_val
 
 
-def cleanup_gpio(pwm_map: Dict[str, Optional[any]]) -> None:
-    for pwm in pwm_map.values():
+def cleanup_pca9685(pca: Optional[any]) -> None:
+    if pca is not None:
         try:
-            if pwm: pwm.stop()
+            pca.deinit()
         except Exception:
             pass
-    if GPIO:
-        GPIO.cleanup()
 
 ################################################################################
 # Capture + Detection + OCR
@@ -243,7 +243,15 @@ class SorterGUI:
         self.threshold_var = tk.DoubleVar(value=self.cfg.price_threshold_usd)
         self.status_var = tk.StringVar(value="Idle")
         self.mock_var = tk.BooleanVar(value=self.cfg.mock_mode)
-        self.pwm_map = setup_gpio(self.servo_cfg, mock=self.cfg.mock_mode)
+        self.pca = setup_pca9685(self.servo_cfg, mock=self.cfg.mock_mode)
+        self.channel_map = {
+            "price_bin": self.servo_cfg.price_bin,
+            "combined_bin": self.servo_cfg.combined_bin,
+            "white_blue_bin": self.servo_cfg.white_blue_bin,
+            "black_bin": self.servo_cfg.black_bin,
+            "red_bin": self.servo_cfg.red_bin,
+            "green_bin": self.servo_cfg.green_bin,
+        }
         self.cap = None
 
         self._build()
@@ -275,13 +283,15 @@ class SorterGUI:
 
     def _on_toggle_mock(self):
         self.cfg.mock_mode = bool(self.mock_var.get())
-        cleanup_gpio(self.pwm_map)
-        self.pwm_map = setup_gpio(self.servo_cfg, mock=self.cfg.mock_mode)
+        cleanup_pca9685(self.pca)
+        self.pca = setup_pca9685(self.servo_cfg, mock=self.cfg.mock_mode)
         self.status_var.set(f"Mock mode={'ON' if self.cfg.mock_mode else 'OFF'}")
 
     def test_bin(self, name: str):
         print(f"[TEST] {name}")
-        move_servo(self.pwm_map, name, self.servo_cfg.open_dc, self.servo_cfg.close_dc, mock=self.cfg.mock_mode)
+        ch = self.channel_map.get(name, -1)
+        if ch >= 0:
+            move_servo(self.pca, name, ch, self.servo_cfg.pulse_open_us, self.servo_cfg.pulse_close_us, mock=self.cfg.mock_mode)
 
     def start(self):
         # Open camera
@@ -345,7 +355,7 @@ class SorterGUI:
     def on_close(self):
         try:
             self.stop()
-            cleanup_gpio(self.pwm_map)
+            cleanup_pca9685(self.pca)
         finally:
             self.root.destroy()
 
