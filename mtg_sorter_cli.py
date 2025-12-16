@@ -1,0 +1,482 @@
+#!/usr/bin/env python3
+"""
+MTG Card Sorter - Command Line Interface
+Headless version for SSH/remote testing without GUI
+"""
+
+import os
+import sys
+import time
+import argparse
+import platform
+from dataclasses import dataclass
+from typing import Optional, Tuple, List
+
+# Optional imports (work on Windows in mock mode)
+try:
+    import cv2
+    import numpy as np
+except Exception:
+    cv2 = None
+    np = None
+
+try:
+    import pytesseract
+except Exception:
+    pytesseract = None
+
+try:
+    import board
+    import busio
+    from adafruit_pca9685 import PCA9685
+except Exception:
+    board = None
+    busio = None
+    PCA9685 = None
+
+import requests
+
+################################################################################
+# Config & Models
+################################################################################
+
+@dataclass
+class ServoConfig:
+    price_bin: int = 0
+    combined_bin: int = 1
+    white_blue_bin: int = 2
+    black_bin: int = 3
+    red_bin: int = 4
+    green_bin: int = 5
+    pulse_open_us: int = 2000
+    pulse_close_us: int = 1000
+    pca_address: int = 0x40
+
+@dataclass
+class AppConfig:
+    mock_mode: bool = True
+    price_threshold_usd: float = 0.25
+    scryfall_timeout: float = 6.0
+    capture_resolution: Tuple[int, int] = (1280, 720)
+    name_roi: Tuple[float, float, float, float] = (0.08, 0.08, 0.92, 0.22)
+    camera_device_index: int = 0
+    max_capture_failures: int = 10
+
+@dataclass
+class CardInfo:
+    name: Optional[str]
+    colors: List[str]
+    price_usd: Optional[float]
+    set_code: Optional[str]
+    type_line: Optional[str]
+
+################################################################################
+# Helpers
+################################################################################
+
+def is_rpi() -> bool:
+    return platform.system() == "Linux" and board is not None
+
+
+def setup_pca9685(servo_cfg: ServoConfig, mock: bool) -> Optional[any]:
+    if mock:
+        print(f"[MOCK PCA9685] Using mock servo outputs (address 0x{servo_cfg.pca_address:02x})")
+        return None
+    try:
+        i2c = busio.I2C(board.SCL, board.SDA)
+        pca = PCA9685(i2c, address=servo_cfg.pca_address)
+        pca.frequency = 50
+        print(f"[PCA9685] ✓ Initialized at 0x{servo_cfg.pca_address:02x}, 50 Hz")
+        return pca
+    except Exception as e:
+        print(f"[PCA9685] ✗ Failed to initialize: {e}")
+        return None
+
+
+def move_servo(pca: Optional[any], name: str, channel: int, pulse_open_us: int, pulse_close_us: int, dwell_s: float = 0.3, mock: bool = True) -> None:
+    if channel < 0 or channel > 15:
+        print(f"[ERROR] Invalid servo channel {channel} for {name}")
+        return
+    
+    if mock or pca is None:
+        print(f"[SERVO] {name} (ch {channel}) -> OPEN ({pulse_open_us}µs) ... CLOSE ({pulse_close_us}µs)")
+        time.sleep(dwell_s)
+        return
+    
+    open_val = int(pulse_open_us * 4096 / 20000.0)
+    close_val = int(pulse_close_us * 4096 / 20000.0)
+    
+    try:
+        print(f"[SERVO] {name} (ch {channel}) -> OPEN", end="", flush=True)
+        pca.channels[channel].duty_cycle = open_val
+        time.sleep(dwell_s)
+        print(" ... CLOSE", flush=True)
+        pca.channels[channel].duty_cycle = close_val
+    except Exception as e:
+        print(f"\n[ERROR] Failed to move servo {name}: {e}")
+
+
+def cleanup_pca9685(pca: Optional[any]) -> None:
+    if pca is not None:
+        try:
+            pca.deinit()
+            print("[PCA9685] Cleaned up")
+        except Exception:
+            pass
+
+################################################################################
+# Capture + Detection + OCR
+################################################################################
+
+def open_camera(resolution: Tuple[int, int], device_index: int = 0):
+    if cv2 is None:
+        raise RuntimeError("OpenCV not available")
+    cap = cv2.VideoCapture(device_index)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, resolution[0])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resolution[1])
+    if not cap.isOpened():
+        raise RuntimeError(f"Camera failed to open (device {device_index})")
+    print(f"[CAMERA] ✓ Opened device {device_index} at {resolution[0]}x{resolution[1]}")
+    return cap
+
+
+def detect_card_and_warp(frame) -> Optional[any]:
+    if np is None:
+        return None
+    
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    cnt = max(contours, key=cv2.contourArea)
+    peri = cv2.arcLength(cnt, True)
+    approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+    if len(approx) != 4:
+        return None
+    pts = approx.reshape(4, 2).astype("float32")
+    s = pts.sum(axis=1)
+    diff = np.diff(pts, axis=1)
+    tl = pts[np.argmin(s)]
+    br = pts[np.argmax(s)]
+    tr = pts[np.argmin(diff)]
+    bl = pts[np.argmax(diff)]
+    ordered = np.array([tl, tr, br, bl], dtype="float32")
+    w = 720
+    h = 1024
+    dst = np.array([[0,0],[w-1,0],[w-1,h-1],[0,h-1]], dtype="float32")
+    M = cv2.getPerspectiveTransform(ordered, dst)
+    warped = cv2.warpPerspective(frame, M, (w, h))
+    return warped
+
+
+def ocr_name_from_image(img, roi_rel: Tuple[float,float,float,float]) -> Optional[str]:
+    if pytesseract is None:
+        return None
+    h, w = img.shape[:2]
+    x1 = int(roi_rel[0] * w)
+    y1 = int(roi_rel[1] * h)
+    x2 = int(roi_rel[2] * w)
+    y2 = int(roi_rel[3] * h)
+    roi = img[y1:y2, x1:x2]
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    gray = cv2.medianBlur(gray, 3)
+    gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    config = "--psm 6 -l eng"
+    text = pytesseract.image_to_string(gray, config=config)
+    if not text:
+        return None
+    name = text.strip().replace("\n", " ")
+    name = name.strip("-—_ :")
+    return name if len(name) >= 2 else None
+
+################################################################################
+# Scryfall Lookup
+################################################################################
+
+_last_scryfall_request = 0
+_MIN_REQUEST_INTERVAL = 0.1
+
+def scryfall_lookup(name: str, timeout: float = 6.0) -> Optional[CardInfo]:
+    global _last_scryfall_request
+    
+    elapsed = time.time() - _last_scryfall_request
+    if elapsed < _MIN_REQUEST_INTERVAL:
+        time.sleep(_MIN_REQUEST_INTERVAL - elapsed)
+    
+    try:
+        _last_scryfall_request = time.time()
+        r = requests.get("https://api.scryfall.com/cards/named", params={"exact": name}, timeout=timeout)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        usd = None
+        prices = data.get("prices", {})
+        if isinstance(prices, dict):
+            p = prices.get("usd") or prices.get("usd_foil") or prices.get("usd_etched")
+            try:
+                usd = float(p) if p else None
+            except Exception:
+                usd = None
+        colors = data.get("color_identity") or data.get("colors") or []
+        set_code = data.get("set")
+        type_line = data.get("type_line")
+        return CardInfo(name=name, colors=colors, price_usd=usd, set_code=set_code, type_line=type_line)
+    except Exception as e:
+        print(f"[SCRYFALL] ✗ Lookup failed: {e}")
+        return None
+
+################################################################################
+# Routing
+################################################################################
+
+def decide_bin(info: CardInfo, mode: str, threshold: float) -> str:
+    if info is None:
+        return "combined_bin"
+    if mode == "price":
+        if info.price_usd is not None and info.price_usd >= threshold:
+            return "price_bin"
+        return "combined_bin"
+    colors = info.colors or []
+    mono = len(colors) == 1
+    if mono:
+        c = colors[0]
+        if c in ("W", "U"):
+            return "white_blue_bin"
+        if c == "B":
+            return "black_bin"
+        if c == "R":
+            return "red_bin"
+        if c == "G":
+            return "green_bin"
+    return "combined_bin"
+
+################################################################################
+# CLI Commands
+################################################################################
+
+def test_servo(pca, servo_cfg, bin_name: str, mock: bool):
+    """Test a single servo bin"""
+    channel_map = {
+        "price": servo_cfg.price_bin,
+        "combined": servo_cfg.combined_bin,
+        "white_blue": servo_cfg.white_blue_bin,
+        "black": servo_cfg.black_bin,
+        "red": servo_cfg.red_bin,
+        "green": servo_cfg.green_bin,
+    }
+    
+    ch = channel_map.get(bin_name, -1)
+    if ch < 0:
+        print(f"[ERROR] Unknown bin: {bin_name}")
+        print(f"Available bins: {', '.join(channel_map.keys())}")
+        return
+    
+    print(f"\n[TEST] Testing {bin_name}_bin (channel {ch})...")
+    move_servo(pca, f"{bin_name}_bin", ch, servo_cfg.pulse_open_us, servo_cfg.pulse_close_us, mock=mock)
+    print("[TEST] Complete\n")
+
+
+def test_all_servos(pca, servo_cfg, mock: bool):
+    """Test all servo bins in sequence"""
+    bins = ["price", "combined", "white_blue", "black", "red", "green"]
+    print("\n[TEST] Testing all servos...")
+    for bin_name in bins:
+        test_servo(pca, servo_cfg, bin_name, mock)
+        time.sleep(0.5)
+    print("[TEST] All servos tested\n")
+
+
+def test_camera(cfg: AppConfig):
+    """Test camera capture"""
+    print("\n[TEST] Testing camera...")
+    try:
+        cap = open_camera(cfg.capture_resolution, cfg.camera_device_index)
+        print("[TEST] Capturing 5 frames...")
+        for i in range(5):
+            ret, frame = cap.read()
+            if ret:
+                print(f"  Frame {i+1}/5: ✓ {frame.shape}")
+            else:
+                print(f"  Frame {i+1}/5: ✗ Failed")
+            time.sleep(0.2)
+        cap.release()
+        print("[TEST] Camera test complete\n")
+    except Exception as e:
+        print(f"[ERROR] Camera test failed: {e}\n")
+
+
+def test_i2c():
+    """Test I2C connection"""
+    print("\n[TEST] Testing I2C...")
+    try:
+        import subprocess
+        result = subprocess.run(['i2cdetect', '-y', '1'], capture_output=True, text=True)
+        print(result.stdout)
+        if '40' in result.stdout:
+            print("[TEST] ✓ PCA9685 detected at 0x40\n")
+        else:
+            print("[TEST] ✗ PCA9685 not found at 0x40\n")
+    except Exception as e:
+        print(f"[ERROR] I2C test failed: {e}")
+        print("Try running: i2cdetect -y 1\n")
+
+
+def run_sorter(cfg: AppConfig, servo_cfg: ServoConfig, pca, mode: str, count: int):
+    """Run the card sorter for N cards"""
+    print(f"\n[SORTER] Starting in {mode} mode...")
+    print(f"[SORTER] Will process {count} card(s)")
+    print(f"[SORTER] Threshold: ${cfg.price_threshold_usd}")
+    print("[SORTER] Press Ctrl+C to stop\n")
+    
+    channel_map = {
+        "price_bin": servo_cfg.price_bin,
+        "combined_bin": servo_cfg.combined_bin,
+        "white_blue_bin": servo_cfg.white_blue_bin,
+        "black_bin": servo_cfg.black_bin,
+        "red_bin": servo_cfg.red_bin,
+        "green_bin": servo_cfg.green_bin,
+    }
+    
+    try:
+        cap = open_camera(cfg.capture_resolution, cfg.camera_device_index)
+        
+        processed = 0
+        failures = 0
+        
+        while processed < count:
+            print(f"\n[{processed+1}/{count}] Waiting for card...", end="", flush=True)
+            
+            # Wait for card detection
+            detected = False
+            for attempt in range(50):  # 5 seconds timeout
+                ret, frame = cap.read()
+                if not ret:
+                    failures += 1
+                    if failures >= cfg.max_capture_failures:
+                        print(f"\n[ERROR] Camera failed {failures} times. Stopping.")
+                        break
+                    continue
+                
+                failures = 0
+                warped = detect_card_and_warp(frame)
+                if warped is not None:
+                    detected = True
+                    print(" DETECTED!")
+                    break
+                time.sleep(0.1)
+            
+            if not detected:
+                print(" TIMEOUT")
+                continue
+            
+            # OCR
+            print("  [OCR] Reading card name...", end="", flush=True)
+            name = ocr_name_from_image(warped, cfg.name_roi)
+            if not name:
+                print(" FAILED")
+                continue
+            print(f" '{name}'")
+            
+            # Scryfall lookup
+            print(f"  [SCRYFALL] Looking up...", end="", flush=True)
+            info = scryfall_lookup(name, cfg.scryfall_timeout)
+            if not info:
+                print(" NOT FOUND")
+                continue
+            
+            price_str = f"${info.price_usd:.2f}" if info.price_usd else "N/A"
+            colors_str = ",".join(info.colors) if info.colors else "colorless"
+            print(f" {price_str} ({colors_str})")
+            
+            # Route
+            bin_name = decide_bin(info, mode, cfg.price_threshold_usd)
+            ch = channel_map.get(bin_name, -1)
+            
+            print(f"  [ROUTE] → {bin_name}")
+            
+            if ch >= 0:
+                move_servo(pca, bin_name, ch, servo_cfg.pulse_open_us, servo_cfg.pulse_close_us, mock=cfg.mock_mode)
+            
+            processed += 1
+            time.sleep(1)  # Cooldown between cards
+        
+        cap.release()
+        print(f"\n[SORTER] Complete! Processed {processed} card(s)\n")
+        
+    except KeyboardInterrupt:
+        print("\n\n[SORTER] Stopped by user\n")
+    except Exception as e:
+        print(f"\n[ERROR] {e}\n")
+
+################################################################################
+# Main CLI
+################################################################################
+
+def main():
+    parser = argparse.ArgumentParser(description="MTG Card Sorter - CLI Version")
+    parser.add_argument('command', choices=['test-servo', 'test-all', 'test-camera', 'test-i2c', 'run'],
+                       help='Command to execute')
+    parser.add_argument('--bin', type=str, help='Bin name for test-servo (price, combined, white_blue, black, red, green)')
+    parser.add_argument('--mode', type=str, default='price', choices=['price', 'color'],
+                       help='Sorting mode (default: price)')
+    parser.add_argument('--count', type=int, default=10, help='Number of cards to process (default: 10)')
+    parser.add_argument('--threshold', type=float, default=0.25, help='Price threshold in USD (default: 0.25)')
+    parser.add_argument('--mock', action='store_true', help='Enable mock mode (no hardware)')
+    parser.add_argument('--no-mock', action='store_true', help='Disable mock mode (use hardware)')
+    
+    args = parser.parse_args()
+    
+    # Setup config
+    cfg = AppConfig()
+    if args.no_mock:
+        cfg.mock_mode = False
+    elif args.mock:
+        cfg.mock_mode = True
+    else:
+        cfg.mock_mode = not is_rpi()
+    
+    cfg.price_threshold_usd = args.threshold
+    
+    servo_cfg = ServoConfig()
+    
+    print("=" * 60)
+    print("MTG Card Sorter - CLI Version")
+    print("=" * 60)
+    print(f"Mode: {'MOCK' if cfg.mock_mode else 'HARDWARE'}")
+    print(f"Platform: {platform.system()}")
+    print("=" * 60)
+    
+    # Setup hardware
+    pca = setup_pca9685(servo_cfg, mock=cfg.mock_mode)
+    
+    try:
+        # Execute command
+        if args.command == 'test-servo':
+            if not args.bin:
+                print("[ERROR] --bin required for test-servo")
+                print("Example: python3 mtg_sorter_cli.py test-servo --bin price")
+                return
+            test_servo(pca, servo_cfg, args.bin, cfg.mock_mode)
+        
+        elif args.command == 'test-all':
+            test_all_servos(pca, servo_cfg, cfg.mock_mode)
+        
+        elif args.command == 'test-camera':
+            test_camera(cfg)
+        
+        elif args.command == 'test-i2c':
+            test_i2c()
+        
+        elif args.command == 'run':
+            run_sorter(cfg, servo_cfg, pca, args.mode, args.count)
+    
+    finally:
+        cleanup_pca9685(pca)
+        print("[CLEANUP] Done")
+
+
+if __name__ == "__main__":
+    main()
