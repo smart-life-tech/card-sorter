@@ -1,6 +1,7 @@
 requests
 opencv-python
 numpy
+pytesseract
 onnxruntime
 adafruit-circuitpython-pca9685
 adafruit-blinka
