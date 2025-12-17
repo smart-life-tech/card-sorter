@@ -40,17 +40,22 @@ from tkinter import ttk
 
 @dataclass
 class ServoConfig:
-    # PCA9685 channel numbers (0-15) for each bin's servo signal
-    price_bin: int = 0
-    combined_bin: int = 1
-    white_blue_bin: int = 2
-    black_bin: int = 3
-    red_bin: int = 4
-    green_bin: int = 5
+    # PCA9685 channel numbers (0-15)
+    # Channel 0 is reserved for card hopper
+    hopper: int = 0              # Card hopper/dispenser servo
+    price_bin: int = 1           # High-value cards bin
+    combined_bin: int = 2        # Multi-color/low-value cards bin
+    white_blue_bin: int = 3      # White/Blue mono-color bin
+    black_bin: int = 4           # Black mono-color bin
+    red_bin: int = 5             # Red mono-color bin
+    green_bin: int = 6           # Green mono-color bin
+    extra_bin: int = 7           # Extra bin (future use)
     # Servo pulse range (in microseconds): 500-2500 typical
     # These convert to 16-bit values for PCA9685
     pulse_open_us: int = 2000    # ~90 degrees
     pulse_close_us: int = 1000   # ~0 degrees
+    hopper_dispense_us: int = 1500  # Hopper dispense position
+    hopper_rest_us: int = 1000      # Hopper rest position
     pca_address: int = 0x40      # Default PCA9685 I2C address
 
 @dataclass

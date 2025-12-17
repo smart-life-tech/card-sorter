@@ -39,12 +39,15 @@ from tkinter import ttk
 @dataclass
 class ServoConfig:
     # PCA9685 channel numbers (0-15) for each bin's servo signal
-    price_bin: int = 0
-    combined_bin: int = 1
-    white_blue_bin: int = 2
-    black_bin: int = 3
-    red_bin: int = 4
-    green_bin: int = 5
+    # Channel 0 reserved for hopper/feed servo on your controller
+    hopper_channel: int = 0
+    price_bin: int = 1
+    combined_bin: int = 2
+    white_blue_bin: int = 3
+    black_bin: int = 4
+    red_bin: int = 5
+    green_bin: int = 6
+    extra_bin: int = 7  # optional 7th bin if wired
     # Servo pulse range (in microseconds): 500-2500 typical
     # These convert to 16-bit values for PCA9685
     pulse_open_us: int = 2000    # ~90 degrees
@@ -245,12 +248,14 @@ class SorterGUI:
         self.mock_var = tk.BooleanVar(value=self.cfg.mock_mode)
         self.pca = setup_pca9685(self.servo_cfg, mock=self.cfg.mock_mode)
         self.channel_map = {
+            "hopper": self.servo_cfg.hopper_channel,
             "price_bin": self.servo_cfg.price_bin,
             "combined_bin": self.servo_cfg.combined_bin,
             "white_blue_bin": self.servo_cfg.white_blue_bin,
             "black_bin": self.servo_cfg.black_bin,
             "red_bin": self.servo_cfg.red_bin,
             "green_bin": self.servo_cfg.green_bin,
+            "extra_bin": self.servo_cfg.extra_bin,
         }
         self.cap = None
 

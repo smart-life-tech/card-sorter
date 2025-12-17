@@ -75,15 +75,17 @@ Pin 9  (GND)     ████  Pin 10 (GPIO 15)
 
 ### PCA9685 Channel Assignments
 
-| Bin Name | Channel | Pulse Open | Pulse Close | Notes |
-|----------|---------|------------|-------------|-------|
-| `price_bin` | 0 | 2000 µs | 1000 µs | ~90° to ~0° |
-| `combined_bin` | 1 | 2000 µs | 1000 µs | ~90° to ~0° |
-| `white_blue_bin` | 2 | 2000 µs | 1000 µs | ~90° to ~0° |
-| `black_bin` | 3 | 2000 µs | 1000 µs | ~90° to ~0° |
-| `red_bin` | 4 | 2000 µs | 1000 µs | ~90° to ~0° |
-| `green_bin` | 5 | 2000 µs | 1000 µs | ~90° to ~0° |
-| **Reserved** | 6–15 | — | — | Available for future expansion |
+| Channel | Purpose | Pulse Open | Pulse Close | Notes |
+|---------|---------|------------|-------------|-------|
+| `Ch0` | Hopper / feeder servo | 2000 µs | 1000 µs | Channel 0 — card hopper (feed) |
+| `Ch1` | `price_bin` | 2000 µs | 1000 µs | |
+| `Ch2` | `combined_bin` | 2000 µs | 1000 µs | |
+| `Ch3` | `white_blue_bin` | 2000 µs | 1000 µs | |
+| `Ch4` | `black_bin` | 2000 µs | 1000 µs | |
+| `Ch5` | `red_bin` | 2000 µs | 1000 µs | |
+| `Ch6` | `green_bin` | 2000 µs | 1000 µs | |
+| `Ch7` | `extra_bin` (optional) | 2000 µs | 1000 µs | Optional 7th bin if wired |
+| **Reserved** | 8–15 | — | — | Available for future expansion |
 
 ### I2C Address
 - **Default**: 0x40 (configurable via address pins on PCA9685)
@@ -108,16 +110,18 @@ Servo PSU GND (common with Pi GND) - Brown/Black wire (Ground)
                               MG90S Servo Motor
 ```
 
-### Example Wiring for All 6 Servos
+### Example Wiring for Hopper + 7 Bins
 
-| Servo Bin | PCA9685 Ch | Signal (O/Y) | Power (Red) | Ground (Br/Blk) |
-|-----------|------------|--------------|-------------|-----------------|
-| price | 0 | Ch0 | +5.5V PSU | GND Rail |
-| combined | 1 | Ch1 | +5.5V PSU | GND Rail |
-| white_blue | 2 | Ch2 | +5.5V PSU | GND Rail |
-| black | 3 | Ch3 | +5.5V PSU | GND Rail |
-| red | 4 | Ch4 | +5.5V PSU | GND Rail |
-| green | 5 | Ch5 | +5.5V PSU | GND Rail |
+| Servo | PCA9685 Channel | Signal (O/Y) | Power (Red) | Ground (Br/Blk) |
+|-------|------------------|--------------|-------------|-----------------|
+| hopper (feeder) | Ch0 | Ch0 | +5.5V PSU | GND Rail |
+| price | Ch1 | Ch1 | +5.5V PSU | GND Rail |
+| combined | Ch2 | Ch2 | +5.5V PSU | GND Rail |
+| white_blue | Ch3 | Ch3 | +5.5V PSU | GND Rail |
+| black | Ch4 | Ch4 | +5.5V PSU | GND Rail |
+| red | Ch5 | Ch5 | +5.5V PSU | GND Rail |
+| green | Ch6 | Ch6 | +5.5V PSU | GND Rail |
+| extra | Ch7 | Ch7 | +5.5V PSU | GND Rail |
 
 ### Ground Rail
 - Connect all servo **brown/black** wires to a common **GND rail**
@@ -184,7 +188,7 @@ Servo PSU GND (common with Pi GND) - Brown/Black wire (Ground)
 | **Pi GPIO 2** | Pin 3 | I2C | PCA9685 SDA | I2C data line (pull-up optional) |
 | **Pi GPIO 3** | Pin 5 | I2C | PCA9685 SCL | I2C clock line (pull-up optional) |
 | **Pi GND** | Pin 6/9/14/20/30/34/39 | Ground | PCA9685 GND, servo PSU GND, all servo black | Common reference |
-| **PCA9685 Ch0–5** | Ch0–Ch5 | PWM Out | Servo signal wires (orange/yellow) | price, combined, white_blue, black, red, green |
+| **PCA9685 Ch0–Ch7** | Ch0–Ch7 | PWM Out | Servo signal wires (orange/yellow) | hopper (Ch0) + bins Ch1–Ch7 |
 | **PCA9685 VCC** | VCC | Power | +5.5V from servo PSU (optional) | Can also use Pi 5V |
 | **PCA9685 GND** | GND | Ground | Common GND rail | Must connect to Pi GND |
 | **Servo PSU** | 5.5V, GND | Power Out | All servo red wires & PCA9685 | 2–3A minimum |
