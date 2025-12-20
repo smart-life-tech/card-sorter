@@ -263,9 +263,17 @@ def decide_bin(info: CardInfo, mode: str, threshold: float) -> str:
 # CLI Commands
 ################################################################################
 
+def test_hopper(pca, servo_cfg, mock: bool):
+    """Test the hopper servo (channel 0)"""
+    print(f"\n[TEST] Testing hopper servo (channel {servo_cfg.hopper})...")
+    move_servo(pca, "hopper", servo_cfg.hopper, servo_cfg.hopper_dispense_us, servo_cfg.hopper_rest_us, mock=mock)
+    print("[TEST] Complete\n")
+
+
 def test_servo(pca, servo_cfg, bin_name: str, mock: bool):
     """Test a single servo bin"""
     channel_map = {
+        "hopper": servo_cfg.hopper,
         "price": servo_cfg.price_bin,
         "combined": servo_cfg.combined_bin,
         "white_blue": servo_cfg.white_blue_bin,
@@ -280,14 +288,19 @@ def test_servo(pca, servo_cfg, bin_name: str, mock: bool):
         print(f"Available bins: {', '.join(channel_map.keys())}")
         return
     
-    print(f"\n[TEST] Testing {bin_name}_bin (channel {ch})...")
-    move_servo(pca, f"{bin_name}_bin", ch, servo_cfg.pulse_open_us, servo_cfg.pulse_close_us, mock=mock)
+    # Use hopper-specific pulse values for hopper
+    if bin_name == "hopper":
+        print(f"\n[TEST] Testing {bin_name} (channel {ch})...")
+        move_servo(pca, bin_name, ch, servo_cfg.hopper_dispense_us, servo_cfg.hopper_rest_us, mock=mock)
+    else:
+        print(f"\n[TEST] Testing {bin_name}_bin (channel {ch})...")
+        move_servo(pca, f"{bin_name}_bin", ch, servo_cfg.pulse_open_us, servo_cfg.pulse_close_us, mock=mock)
     print("[TEST] Complete\n")
 
 
 def test_all_servos(pca, servo_cfg, mock: bool):
     """Test all servo bins in sequence"""
-    bins = ["price", "combined", "white_blue", "black", "red", "green"]
+    bins = ["hopper", "price", "combined", "white_blue", "black", "red", "green"]
     print("\n[TEST] Testing all servos...")
     for bin_name in bins:
         test_servo(pca, servo_cfg, bin_name, mock)
@@ -423,9 +436,9 @@ def run_sorter(cfg: AppConfig, servo_cfg: ServoConfig, pca, mode: str, count: in
 
 def main():
     parser = argparse.ArgumentParser(description="MTG Card Sorter - CLI Version")
-    parser.add_argument('command', choices=['test-servo', 'test-all', 'test-camera', 'test-i2c', 'run'],
+    parser.add_argument('command', choices=['test-servo', 'test-hopper', 'test-all', 'test-camera', 'test-i2c', 'run'],
                        help='Command to execute')
-    parser.add_argument('--bin', type=str, help='Bin name for test-servo (price, combined, white_blue, black, red, green)')
+    parser.add_argument('--bin', type=str, help='Bin name for test-servo (hopper, price, combined, white_blue, black, red, green)')
     parser.add_argument('--mode', type=str, default='price', choices=['price', 'color'],
                        help='Sorting mode (default: price)')
     parser.add_argument('--count', type=int, default=10, help='Number of cards to process (default: 10)')
@@ -466,6 +479,9 @@ def main():
                 print("Example: python3 mtg_sorter_cli.py test-servo --bin price")
                 return
             test_servo(pca, servo_cfg, args.bin, cfg.mock_mode)
+        
+        elif args.command == 'test-hopper':
+            test_hopper(pca, servo_cfg, cfg.mock_mode)
         
         elif args.command == 'test-all':
             test_all_servos(pca, servo_cfg, cfg.mock_mode)
