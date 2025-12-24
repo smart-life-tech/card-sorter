@@ -26,13 +26,9 @@ except Exception:
     pytesseract = None
 
 try:
-    import board
-    import busio
-    from adafruit_pca9685 import PCA9685
+    from adafruit_servokit import ServoKit
 except Exception:
-    board = None
-    busio = None
-    PCA9685 = None
+    ServoKit = None
 
 import requests
 
@@ -52,15 +48,13 @@ class ServoConfig:
     red_bin: int = 5             # Red mono-color bin (SG90 0-180°)
     green_bin: int = 6           # Green mono-color bin (SG90 0-180°)
     extra_bin: int = 7           # Extra bin (future use)
-    # SG90 servo pulse widths (0-180° positional servos)
-    # Standard range for SG90: 1000-2000µs
-    pulse_min_us: int = 1000     # Minimum pulse width (0 degrees)
-    pulse_max_us: int = 2000     # Maximum pulse width (180 degrees)
-    pulse_open_us: int = 2000    # 180 degrees (fully open)
-    pulse_close_us: int = 1000   # 0 degrees (fully closed)
-    # 360° continuous rotation servo (hopper)
-    hopper_dispense_us: int = 1600  # Rotation speed/direction - slightly above 1500 for rotation
-    hopper_rest_us: int = 1500      # Stop position - 1500µs is neutral/stop for continuous servos
+    # Servo angles (0-180° positional servos)
+    angle_open: int = 180        # Fully open position
+    angle_close: int = 0         # Fully closed position
+    # Continuous rotation servo (hopper) - uses throttle (-1.0 to 1.0)
+    hopper_throttle: float = 0.2  # Forward rotation speed (0.0 = stop, 1.0 = full speed)
+    # PCA9685 settings
+    num_channels: int = 16       # Number of servo channels
     pca_address: int = 0x40      # Default PCA9685 I2C address
 
 @dataclass
@@ -86,87 +80,82 @@ class CardInfo:
 ################################################################################
 
 def is_rpi() -> bool:
-    return platform.system() == "Linux" and board is not None
+    return platform.system() == "Linux" and ServoKit is not None
 
 
-def setup_pca9685(servo_cfg: ServoConfig, mock: bool) -> Optional[any]:
+def setup_servokit(servo_cfg: ServoConfig, mock: bool) -> Optional[any]:
+    """Initialize ServoKit for controlling servos via PCA9685"""
     if mock:
-        print(f"[MOCK PCA9685] Using mock servo outputs (address 0x{servo_cfg.pca_address:02x})")
+        print(f"[MOCK SERVOKIT] Using mock servo outputs ({servo_cfg.num_channels} channels)")
         return None
     try:
-        i2c = busio.I2C(board.SCL, board.SDA)
-        pca = PCA9685(i2c, address=servo_cfg.pca_address)
-        pca.frequency = 50
-        print(f"[PCA9685] ✓ Initialized at 0x{servo_cfg.pca_address:02x}, 50 Hz")
-        return pca
+        kit = ServoKit(channels=servo_cfg.num_channels, address=servo_cfg.pca_address)
+        print(f"[SERVOKIT] ✓ Initialized {servo_cfg.num_channels} channels at 0x{servo_cfg.pca_address:02x}")
+        return kit
     except Exception as e:
-        print(f"[PCA9685] ✗ Failed to initialize: {e}")
+        print(f"[SERVOKIT] ✗ Failed to initialize: {e}")
         return None
 
 
-def move_servo(pca: Optional[any], name: str, channel: int, pulse_open_us: int, pulse_close_us: int, dwell_s: float = 0.5, mock: bool = True) -> None:
+def move_servo(kit: Optional[any], name: str, channel: int, angle_open: int, angle_close: int, dwell_s: float = 0.5, mock: bool = True) -> None:
     """Move a standard positional servo (0-180°) - for channels 1-15 (SG90 servos)"""
     if channel < 0 or channel > 15:
         print(f"[ERROR] Invalid servo channel {channel} for {name}")
         return
     
-    if mock or pca is None:
-        print(f"[SERVO] {name} (ch {channel}) -> OPEN ({pulse_open_us}µs) ... CLOSE ({pulse_close_us}µs)")
+    if mock or kit is None:
+        print(f"[SERVO] {name} (ch {channel}) -> OPEN ({angle_open}°) ... CLOSE ({angle_close}°)")
         time.sleep(dwell_s * 2)  # Mock takes longer to simulate movement
         return
     
-    # Convert microseconds to duty cycle value (0-4095)
-    # PCA9685 at 50Hz: 20ms period = 20000µs
-    # duty_cycle = (pulse_width_us / 20000) * 4096
-    open_val = int((pulse_open_us / 20000.0) * 4096)
-    close_val = int((pulse_close_us / 20000.0) * 4096)
-    
-    print(f"[DEBUG] Channel {channel}: open_val={open_val}, close_val={close_val}")
-    
     try:
-        print(f"[SERVO] {name} (ch {channel}) -> OPEN ({pulse_open_us}µs)", end="", flush=True)
-        pca.channels[channel].duty_cycle = open_val
+        print(f"[SERVO] {name} (ch {channel}) -> OPEN ({angle_open}°)", end="", flush=True)
+        kit.servo[channel].angle = angle_open
         time.sleep(dwell_s)
-        print(f" ... CLOSE ({pulse_close_us}µs)", flush=True)
-        pca.channels[channel].duty_cycle = close_val
+        print(f" ... CLOSE ({angle_close}°)", flush=True)
+        kit.servo[channel].angle = angle_close
         time.sleep(0.3)  # Give servo time to reach closed position
     except Exception as e:
         print(f"\n[ERROR] Failed to move servo {name}: {e}")
 
 
-def move_continuous_servo(pca: Optional[any], name: str, channel: int, rotate_us: int, stop_us: int, duration_s: float = 0.5, mock: bool = True) -> None:
-    """Move a continuous rotation servo (360°) - for channel 0 (hopper)"""
+def move_continuous_servo(kit: Optional[any], name: str, channel: int, throttle: float, duration_s: float = 0.5, mock: bool = True) -> None:
+    """Move a continuous rotation servo (360°) - for channel 0 (hopper)
+    
+    Args:
+        throttle: -1.0 to 1.0 (negative = reverse, 0 = stop, positive = forward)
+    """
     if channel < 0 or channel > 15:
         print(f"[ERROR] Invalid servo channel {channel} for {name}")
         return
     
-    if mock or pca is None:
-        print(f"[CONTINUOUS SERVO] {name} (ch {channel}) -> ROTATE ({rotate_us}µs) for {duration_s}s ... STOP ({stop_us}µs)")
+    if mock or kit is None:
+        print(f"[CONTINUOUS SERVO] {name} (ch {channel}) -> ROTATE (throttle={throttle}) for {duration_s}s ... STOP")
         time.sleep(duration_s)
         return
     
-    # Convert microseconds to duty cycle value
-    rotate_val = int((rotate_us / 20000.0) * 4096)
-    stop_val = int((stop_us / 20000.0) * 4096)
-    
-    print(f"[DEBUG] Channel {channel}: rotate_val={rotate_val}, stop_val={stop_val}")
-    
     try:
-        print(f"[CONTINUOUS SERVO] {name} (ch {channel}) -> ROTATE ({rotate_us}µs)", end="", flush=True)
-        pca.channels[channel].duty_cycle = rotate_val
+        print(f"[CONTINUOUS SERVO] {name} (ch {channel}) -> ROTATE (throttle={throttle})", end="", flush=True)
+        kit.continuous_servo[channel].throttle = throttle
         time.sleep(duration_s)
-        print(f" ... STOP ({stop_us}µs)", flush=True)
-        pca.channels[channel].duty_cycle = stop_val
+        print(" ... STOP", flush=True)
+        kit.continuous_servo[channel].throttle = 0  # Stop
         time.sleep(0.2)  # Brief pause after stopping
     except Exception as e:
         print(f"\n[ERROR] Failed to move continuous servo {name}: {e}")
 
 
-def cleanup_pca9685(pca: Optional[any]) -> None:
-    if pca is not None:
+def cleanup_servokit(kit: Optional[any]) -> None:
+    """Stop all servos and clean up"""
+    if kit is not None:
         try:
-            pca.deinit()
-            print("[PCA9685] Cleaned up")
+            # Stop all continuous servos
+            for i in range(16):
+                try:
+                    kit.continuous_servo[i].throttle = 0
+                except Exception:
+                    pass
+            print("[SERVOKIT] Cleaned up")
         except Exception:
             pass
 
@@ -303,15 +292,15 @@ def decide_bin(info: CardInfo, mode: str, threshold: float) -> str:
 # CLI Commands
 ################################################################################
 
-def test_hopper(pca, servo_cfg, mock: bool):
+def test_hopper(kit, servo_cfg, mock: bool):
     """Test the hopper servo (channel 0) - 360° continuous rotation"""
     print(f"\n[TEST] Testing hopper servo (channel {servo_cfg.hopper})...")
     print("[INFO] Hopper is a 360° continuous rotation servo")
-    move_continuous_servo(pca, "hopper", servo_cfg.hopper, servo_cfg.hopper_dispense_us, servo_cfg.hopper_rest_us, duration_s=0.5, mock=mock)
+    move_continuous_servo(kit, "hopper", servo_cfg.hopper, servo_cfg.hopper_throttle, duration_s=0.5, mock=mock)
     print("[TEST] Complete\n")
 
 
-def test_servo(pca, servo_cfg, bin_name: str, mock: bool):
+def test_servo(kit, servo_cfg, bin_name: str, mock: bool):
     """Test a single servo bin"""
     channel_map = {
         "hopper": servo_cfg.hopper,
@@ -332,54 +321,47 @@ def test_servo(pca, servo_cfg, bin_name: str, mock: bool):
     # Hopper uses continuous rotation servo (360°)
     if bin_name == "hopper":
         print(f"\n[TEST] Testing {bin_name} (channel {ch}) - 360° continuous rotation servo...")
-        move_continuous_servo(pca, bin_name, ch, servo_cfg.hopper_dispense_us, servo_cfg.hopper_rest_us, duration_s=0.5, mock=mock)
+        move_continuous_servo(kit, bin_name, ch, servo_cfg.hopper_throttle, duration_s=0.5, mock=mock)
     else:
         # Bins use standard positional servos (0-180°)
         print(f"\n[TEST] Testing {bin_name}_bin (channel {ch}) - 0-180° positional servo...")
-        move_servo(pca, f"{bin_name}_bin", ch, servo_cfg.pulse_open_us, servo_cfg.pulse_close_us, mock=mock)
+        move_servo(kit, f"{bin_name}_bin", ch, servo_cfg.angle_open, servo_cfg.angle_close, mock=mock)
     print("[TEST] Complete\n")
 
 
-def test_all_servos(pca, servo_cfg, mock: bool):
+def test_all_servos(kit, servo_cfg, mock: bool):
     """Test all servo bins in sequence"""
     bins = ["hopper", "price", "combined", "white_blue", "black", "red", "green"]
     print("\n[TEST] Testing all servos...")
     for bin_name in bins:
-        test_servo(pca, servo_cfg, bin_name, mock)
+        test_servo(kit, servo_cfg, bin_name, mock)
         time.sleep(0.5)
     print("[TEST] All servos tested\n")
 
 
-def test_all_channels(pca, servo_cfg, mock: bool):
-    """Test all 16 PCA9685 channels with multiple pulse widths"""
-    print("\n[TEST] Testing all 16 PCA9685 channels...")
-    print("[INFO] This will test each channel with different pulse widths")
+def test_all_channels(kit, servo_cfg, mock: bool):
+    """Test all 16 servo channels with different angles"""
+    print("\n[TEST] Testing all 16 servo channels...")
+    print("[INFO] This will test each channel at different angles")
     print("[INFO] Watch for ANY movement on ANY servo\n")
     
-    if mock or pca is None:
+    if mock or kit is None:
         print("[MOCK] Skipping hardware test in mock mode\n")
         return
     
-    # Test pulse widths to try
-    test_pulses = [
-        (500, "500µs - minimum"),
-        (1000, "1000µs - typical 0°"),
-        (1500, "1500µs - center/90°"),
-        (2000, "2000µs - typical 180°"),
-        (2500, "2500µs - maximum"),
-    ]
+    # Test angles to try
+    test_angles = [0, 45, 90, 135, 180]
     
     for channel in range(16):
         print(f"\n{'='*60}")
         print(f"Channel {channel}:")
         print(f"{'='*60}")
         
-        for pulse_us, description in test_pulses:
-            duty_cycle = int((pulse_us / 20000.0) * 4096)
-            print(f"  Setting {description} (duty={duty_cycle})...", end="", flush=True)
+        for angle in test_angles:
+            print(f"  Setting {angle}°...", end="", flush=True)
             
             try:
-                pca.channels[channel].duty_cycle = duty_cycle
+                kit.servo[channel].angle = angle
                 time.sleep(0.8)  # Give servo time to move
                 print(" ✓")
             except Exception as e:
@@ -387,9 +369,8 @@ def test_all_channels(pca, servo_cfg, mock: bool):
         
         # Return to neutral
         try:
-            neutral_duty = int((1500 / 20000.0) * 4096)
-            pca.channels[channel].duty_cycle = neutral_duty
-            print(f"  Returning to neutral (1500µs)...")
+            kit.servo[channel].angle = 90
+            print("  Returning to 90°...")
         except Exception:
             pass
         
@@ -400,7 +381,7 @@ def test_all_channels(pca, servo_cfg, mock: bool):
     print("[INFO] If you saw NO movement on channels 1-15, check:")
     print("  1. Power supply to servos (5-6V with sufficient current)")
     print("  2. Servo connections (signal, power, ground)")
-    print("  3. Servo type (may need different pulse widths)")
+    print("  3. Servo type (SG90 or similar 0-180° servos)")
     print(f"{'='*60}\n")
 
 
@@ -439,7 +420,7 @@ def test_i2c():
         print("Try running: i2cdetect -y 1\n")
 
 
-def run_sorter(cfg: AppConfig, servo_cfg: ServoConfig, pca, mode: str, count: int):
+def run_sorter(cfg: AppConfig, servo_cfg: ServoConfig, kit, mode: str, count: int):
     """Run the card sorter for N cards"""
     print(f"\n[SORTER] Starting in {mode} mode...")
     print(f"[SORTER] Will process {count} card(s)")
@@ -513,7 +494,7 @@ def run_sorter(cfg: AppConfig, servo_cfg: ServoConfig, pca, mode: str, count: in
             print(f"  [ROUTE] → {bin_name}")
             
             if ch >= 0:
-                move_servo(pca, bin_name, ch, servo_cfg.pulse_open_us, servo_cfg.pulse_close_us, mock=cfg.mock_mode)
+                move_servo(kit, bin_name, ch, servo_cfg.angle_open, servo_cfg.angle_close, mock=cfg.mock_mode)
             
             processed += 1
             time.sleep(1)  # Cooldown between cards
@@ -565,7 +546,7 @@ def main():
     print("=" * 60)
     
     # Setup hardware
-    pca = setup_pca9685(servo_cfg, mock=cfg.mock_mode)
+    kit = setup_servokit(servo_cfg, mock=cfg.mock_mode)
     
     try:
         # Execute command
@@ -574,16 +555,16 @@ def main():
                 print("[ERROR] --bin required for test-servo")
                 print("Example: python3 mtg_sorter_cli.py test-servo --bin price")
                 return
-            test_servo(pca, servo_cfg, args.bin, cfg.mock_mode)
+            test_servo(kit, servo_cfg, args.bin, cfg.mock_mode)
         
         elif args.command == 'test-hopper':
-            test_hopper(pca, servo_cfg, cfg.mock_mode)
+            test_hopper(kit, servo_cfg, cfg.mock_mode)
         
         elif args.command == 'test-all':
-            test_all_servos(pca, servo_cfg, cfg.mock_mode)
+            test_all_servos(kit, servo_cfg, cfg.mock_mode)
         
         elif args.command == 'test-all-channels':
-            test_all_channels(pca, servo_cfg, cfg.mock_mode)
+            test_all_channels(kit, servo_cfg, cfg.mock_mode)
         
         elif args.command == 'test-camera':
             test_camera(cfg)
@@ -592,10 +573,10 @@ def main():
             test_i2c()
         
         elif args.command == 'run':
-            run_sorter(cfg, servo_cfg, pca, args.mode, args.count)
+            run_sorter(cfg, servo_cfg, kit, args.mode, args.count)
     
     finally:
-        cleanup_pca9685(pca)
+        cleanup_servokit(kit)
         print("[CLEANUP] Done")
 
 
