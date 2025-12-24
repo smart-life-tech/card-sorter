@@ -65,8 +65,27 @@ python3 mtg_sorter_cli.py test-i2c
 
 ---
 
+### `test-hopper`
+Test the card hopper servo (channel 0).
+
+**Usage:**
+```bash
+python3 mtg_sorter_cli.py test-hopper
+```
+
+**Note:** The hopper uses a **360° continuous rotation servo** on channel 0, unlike the other servos which are standard 0-180° positional servos. The hopper dispenses cards by rotating briefly then stopping.
+
+**Output:**
+```
+[TEST] Testing hopper servo (channel 0)...
+[SERVO] hopper (ch 0) -> OPEN (1500µs) ... CLOSE (1000µs)
+[TEST] Complete
+```
+
+---
+
 ### `test-servo`
-Test a single servo bin.
+Test a single servo bin (standard positional servos).
 
 **Usage:**
 ```bash
@@ -74,12 +93,13 @@ python3 mtg_sorter_cli.py test-servo --bin <bin_name>
 ```
 
 **Available bins:**
-- `price` - High-value cards bin
-- `combined` - Multi-color/low-value cards bin
-- `white_blue` - White/Blue mono-color bin
-- `black` - Black mono-color bin
-- `red` - Red mono-color bin
-- `green` - Green mono-color bin
+- `hopper` - Card hopper/dispenser (360° continuous rotation servo, channel 0)
+- `price` - High-value cards bin (0-180° positional servo, channel 1)
+- `combined` - Multi-color/low-value cards bin (0-180° positional servo, channel 2)
+- `white_blue` - White/Blue mono-color bin (0-180° positional servo, channel 3)
+- `black` - Black mono-color bin (0-180° positional servo, channel 4)
+- `red` - Red mono-color bin (0-180° positional servo, channel 5)
+- `green` - Green mono-color bin (0-180° positional servo, channel 6)
 
 **Examples:**
 ```bash
@@ -95,15 +115,17 @@ python3 mtg_sorter_cli.py test-servo --bin price --no-mock
 
 **Output:**
 ```
-[TEST] Testing price_bin (channel 0)...
-[SERVO] price_bin (ch 0) -> OPEN (2000µs) ... CLOSE (1000µs)
+[TEST] Testing price_bin (channel 1)...
+[SERVO] price_bin (ch 1) -> OPEN (2000µs) ... CLOSE (1000µs)
 [TEST] Complete
 ```
+
+**Important:** Channel 0 is reserved for the hopper (360° continuous rotation servo). Sorting bins use channels 1-6 (standard 0-180° positional servos).
 
 ---
 
 ### `test-all`
-Test all servo bins in sequence.
+Test all servo bins in sequence (hopper + all sorting bins).
 
 **Usage:**
 ```bash
@@ -114,16 +136,22 @@ python3 mtg_sorter_cli.py test-all
 ```
 [TEST] Testing all servos...
 
-[TEST] Testing price_bin (channel 0)...
-[SERVO] price_bin (ch 0) -> OPEN (2000µs) ... CLOSE (1000µs)
+[TEST] Testing hopper (channel 0)...
+[SERVO] hopper (ch 0) -> OPEN (1500µs) ... CLOSE (1000µs)
 [TEST] Complete
 
-[TEST] Testing combined_bin (channel 1)...
-[SERVO] combined_bin (ch 1) -> OPEN (2000µs) ... CLOSE (1000µs)
+[TEST] Testing price_bin (channel 1)...
+[SERVO] price_bin (ch 1) -> OPEN (2000µs) ... CLOSE (1000µs)
 [TEST] Complete
 
-... (continues for all 6 bins)
+[TEST] Testing combined_bin (channel 2)...
+[SERVO] combined_bin (ch 2) -> OPEN (2000µs) ... CLOSE (1000µs)
+[TEST] Complete
+
+... (continues for all 7 servos: hopper + 6 sorting bins)
 ```
+
+**Note:** The hopper (channel 0) is a 360° continuous rotation servo, while channels 1-6 are standard 0-180° positional servos for the sorting bins.
 
 ---
 
@@ -225,7 +253,10 @@ python3 mtg_sorter_cli.py test-all
 
 ### Calibrate Individual Servos
 ```bash
-# Test each bin to verify servo angles
+# Test hopper (360° continuous rotation servo)
+python3 mtg_sorter_cli.py test-hopper
+
+# Test each sorting bin to verify servo angles (0-180° positional servos)
 python3 mtg_sorter_cli.py test-servo --bin price
 python3 mtg_sorter_cli.py test-servo --bin combined
 python3 mtg_sorter_cli.py test-servo --bin white_blue
@@ -356,6 +387,8 @@ newgrp i2c
 ```
 
 ### Servo angles wrong
+
+**For sorting bins (channels 1-6, 0-180° positional servos):**
 Edit `mtg_sorter_cli.py` and adjust:
 ```python
 pulse_open_us: int = 2000    # Increase for more rotation
@@ -366,6 +399,20 @@ Test with:
 ```bash
 python3 mtg_sorter_cli.py test-servo --bin price
 ```
+
+**For hopper (channel 0, 360° continuous rotation servo):**
+Edit `mtg_sorter_cli.py` and adjust:
+```python
+hopper_dispense_us: int = 1500  # Rotation speed/direction for dispensing
+hopper_rest_us: int = 1000      # Stop position
+```
+
+Test with:
+```bash
+python3 mtg_sorter_cli.py test-hopper
+```
+
+**Note:** The hopper servo is a continuous rotation servo, so pulse values control rotation speed and direction rather than position. Values around 1500µs typically rotate the servo, while 1000µs or 2000µs stop it (depending on servo model).
 
 ---
 

@@ -100,6 +100,7 @@ def setup_pca9685(servo_cfg: ServoConfig, mock: bool) -> Optional[any]:
 
 
 def move_servo(pca: Optional[any], name: str, channel: int, pulse_open_us: int, pulse_close_us: int, dwell_s: float = 0.3, mock: bool = True) -> None:
+    """Move a standard positional servo (0-180°) - for channels 1-15"""
     if channel < 0 or channel > 15:
         print(f"[ERROR] Invalid servo channel {channel} for {name}")
         return
@@ -120,6 +121,30 @@ def move_servo(pca: Optional[any], name: str, channel: int, pulse_open_us: int, 
         pca.channels[channel].duty_cycle = close_val
     except Exception as e:
         print(f"\n[ERROR] Failed to move servo {name}: {e}")
+
+
+def move_continuous_servo(pca: Optional[any], name: str, channel: int, rotate_us: int, stop_us: int, duration_s: float = 0.5, mock: bool = True) -> None:
+    """Move a continuous rotation servo (360°) - for channel 0 (hopper)"""
+    if channel < 0 or channel > 15:
+        print(f"[ERROR] Invalid servo channel {channel} for {name}")
+        return
+    
+    if mock or pca is None:
+        print(f"[CONTINUOUS SERVO] {name} (ch {channel}) -> ROTATE ({rotate_us}µs) for {duration_s}s ... STOP ({stop_us}µs)")
+        time.sleep(duration_s)
+        return
+    
+    rotate_val = int(rotate_us * 4096 / 20000.0)
+    stop_val = int(stop_us * 4096 / 20000.0)
+    
+    try:
+        print(f"[CONTINUOUS SERVO] {name} (ch {channel}) -> ROTATE", end="", flush=True)
+        pca.channels[channel].duty_cycle = rotate_val
+        time.sleep(duration_s)
+        print(" ... STOP", flush=True)
+        pca.channels[channel].duty_cycle = stop_val
+    except Exception as e:
+        print(f"\n[ERROR] Failed to move continuous servo {name}: {e}")
 
 
 def cleanup_pca9685(pca: Optional[any]) -> None:
@@ -264,9 +289,10 @@ def decide_bin(info: CardInfo, mode: str, threshold: float) -> str:
 ################################################################################
 
 def test_hopper(pca, servo_cfg, mock: bool):
-    """Test the hopper servo (channel 0)"""
+    """Test the hopper servo (channel 0) - 360° continuous rotation"""
     print(f"\n[TEST] Testing hopper servo (channel {servo_cfg.hopper})...")
-    move_servo(pca, "hopper", servo_cfg.hopper, servo_cfg.hopper_dispense_us, servo_cfg.hopper_rest_us, mock=mock)
+    print("[INFO] Hopper is a 360° continuous rotation servo")
+    move_continuous_servo(pca, "hopper", servo_cfg.hopper, servo_cfg.hopper_dispense_us, servo_cfg.hopper_rest_us, duration_s=0.5, mock=mock)
     print("[TEST] Complete\n")
 
 
@@ -288,12 +314,13 @@ def test_servo(pca, servo_cfg, bin_name: str, mock: bool):
         print(f"Available bins: {', '.join(channel_map.keys())}")
         return
     
-    # Use hopper-specific pulse values for hopper
+    # Hopper uses continuous rotation servo (360°)
     if bin_name == "hopper":
-        print(f"\n[TEST] Testing {bin_name} (channel {ch})...")
-        move_servo(pca, bin_name, ch, servo_cfg.hopper_dispense_us, servo_cfg.hopper_rest_us, mock=mock)
+        print(f"\n[TEST] Testing {bin_name} (channel {ch}) - 360° continuous rotation servo...")
+        move_continuous_servo(pca, bin_name, ch, servo_cfg.hopper_dispense_us, servo_cfg.hopper_rest_us, duration_s=0.5, mock=mock)
     else:
-        print(f"\n[TEST] Testing {bin_name}_bin (channel {ch})...")
+        # Bins use standard positional servos (0-180°)
+        print(f"\n[TEST] Testing {bin_name}_bin (channel {ch}) - 0-180° positional servo...")
         move_servo(pca, f"{bin_name}_bin", ch, servo_cfg.pulse_open_us, servo_cfg.pulse_close_us, mock=mock)
     print("[TEST] Complete\n")
 
