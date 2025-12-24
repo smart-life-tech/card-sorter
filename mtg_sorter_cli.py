@@ -54,10 +54,10 @@ class ServoConfig:
     extra_bin: int = 7           # Extra bin (future use)
     # SG90 servo pulse widths (0-180° positional servos)
     pulse_open_us: int = 2000    # 180 degrees (fully open)
-    pulse_close_us: int = 1000   # 0 degrees (fully closed)
+    pulse_close_us: int = 500    # 0 degrees (fully closed) - changed from 1000 to 500
     # 360° continuous rotation servo (hopper)
-    hopper_dispense_us: int = 1500  # Rotation speed/direction
-    hopper_rest_us: int = 1000      # Stop position
+    hopper_dispense_us: int = 1600  # Rotation speed/direction - slightly above 1500 for rotation
+    hopper_rest_us: int = 1500      # Stop position - 1500µs is neutral/stop for continuous servos
     pca_address: int = 0x40      # Default PCA9685 I2C address
 
 @dataclass
