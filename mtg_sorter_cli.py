@@ -347,6 +347,60 @@ def test_all_servos(pca, servo_cfg, mock: bool):
     print("[TEST] All servos tested\n")
 
 
+def test_all_channels(pca, servo_cfg, mock: bool):
+    """Test all 16 PCA9685 channels with multiple pulse widths"""
+    print("\n[TEST] Testing all 16 PCA9685 channels...")
+    print("[INFO] This will test each channel with different pulse widths")
+    print("[INFO] Watch for ANY movement on ANY servo\n")
+    
+    if mock or pca is None:
+        print("[MOCK] Skipping hardware test in mock mode\n")
+        return
+    
+    # Test pulse widths to try
+    test_pulses = [
+        (500, "500µs - minimum"),
+        (1000, "1000µs - typical 0°"),
+        (1500, "1500µs - center/90°"),
+        (2000, "2000µs - typical 180°"),
+        (2500, "2500µs - maximum"),
+    ]
+    
+    for channel in range(16):
+        print(f"\n{'='*60}")
+        print(f"Channel {channel}:")
+        print(f"{'='*60}")
+        
+        for pulse_us, description in test_pulses:
+            duty_cycle = int((pulse_us / 20000.0) * 4096)
+            print(f"  Setting {description} (duty={duty_cycle})...", end="", flush=True)
+            
+            try:
+                pca.channels[channel].duty_cycle = duty_cycle
+                time.sleep(0.8)  # Give servo time to move
+                print(" ✓")
+            except Exception as e:
+                print(f" ✗ Error: {e}")
+        
+        # Return to neutral
+        try:
+            neutral_duty = int((1500 / 20000.0) * 4096)
+            pca.channels[channel].duty_cycle = neutral_duty
+            print(f"  Returning to neutral (1500µs)...")
+        except Exception:
+            pass
+        
+        time.sleep(0.3)
+    
+    print(f"\n{'='*60}")
+    print("[TEST] All 16 channels tested")
+    print("[INFO] If you saw NO movement on channels 1-15, check:")
+    print("  1. Power supply to servos (5-6V with sufficient current)")
+    print("  2. Servo connections (signal, power, ground)")
+    print("  3. Servo type (may need different pulse widths)")
+    print(f"{'='*60}\n")
+
+
 def test_camera(cfg: AppConfig):
     """Test camera capture"""
     print("\n[TEST] Testing camera...")
@@ -475,7 +529,7 @@ def run_sorter(cfg: AppConfig, servo_cfg: ServoConfig, pca, mode: str, count: in
 
 def main():
     parser = argparse.ArgumentParser(description="MTG Card Sorter - CLI Version")
-    parser.add_argument('command', choices=['test-servo', 'test-hopper', 'test-all', 'test-camera', 'test-i2c', 'run'],
+    parser.add_argument('command', choices=['test-servo', 'test-hopper', 'test-all', 'test-all-channels', 'test-camera', 'test-i2c', 'run'],
                        help='Command to execute')
     parser.add_argument('--bin', type=str, help='Bin name for test-servo (hopper, price, combined, white_blue, black, red, green)')
     parser.add_argument('--mode', type=str, default='price', choices=['price', 'color'],
@@ -524,6 +578,9 @@ def main():
         
         elif args.command == 'test-all':
             test_all_servos(pca, servo_cfg, cfg.mock_mode)
+        
+        elif args.command == 'test-all-channels':
+            test_all_channels(pca, servo_cfg, cfg.mock_mode)
         
         elif args.command == 'test-camera':
             test_camera(cfg)
