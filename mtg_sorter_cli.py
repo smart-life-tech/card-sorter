@@ -53,8 +53,11 @@ class ServoConfig:
     green_bin: int = 6           # Green mono-color bin (SG90 0-180°)
     extra_bin: int = 7           # Extra bin (future use)
     # SG90 servo pulse widths (0-180° positional servos)
+    # Standard range for SG90: 1000-2000µs
+    pulse_min_us: int = 1000     # Minimum pulse width (0 degrees)
+    pulse_max_us: int = 2000     # Maximum pulse width (180 degrees)
     pulse_open_us: int = 2000    # 180 degrees (fully open)
-    pulse_close_us: int = 500    # 0 degrees (fully closed) - changed from 1000 to 500
+    pulse_close_us: int = 1000   # 0 degrees (fully closed)
     # 360° continuous rotation servo (hopper)
     hopper_dispense_us: int = 1600  # Rotation speed/direction - slightly above 1500 for rotation
     hopper_rest_us: int = 1500      # Stop position - 1500µs is neutral/stop for continuous servos
