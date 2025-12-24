@@ -53,6 +53,9 @@ class ServoConfig:
     angle_close: int = 0         # Fully closed position
     # Continuous rotation servo (hopper) - uses throttle (-1.0 to 1.0)
     hopper_throttle: float = 0.2  # Forward rotation speed (0.0 = stop, 1.0 = full speed)
+    # SG90 servo pulse width range (microseconds)
+    pulse_min: int = 500         # Minimum pulse width for 0° (SG90: 500-1000µs)
+    pulse_max: int = 2500        # Maximum pulse width for 180° (SG90: 2000-2500µs)
     # PCA9685 settings
     num_channels: int = 16       # Number of servo channels
     pca_address: int = 0x40      # Default PCA9685 I2C address
@@ -90,6 +93,23 @@ def setup_servokit(servo_cfg: ServoConfig, mock: bool) -> Optional[any]:
         return None
     try:
         kit = ServoKit(channels=servo_cfg.num_channels, address=servo_cfg.pca_address)
+        
+        # Configure pulse width range for all positional servos (channels 1-15)
+        # Channel 0 is for continuous rotation servo (hopper)
+        print(f"[SERVOKIT] Configuring pulse widths: {servo_cfg.pulse_min}µs - {servo_cfg.pulse_max}µs")
+        for channel in range(1, 16):  # Skip channel 0 (hopper)
+            try:
+                kit.servo[channel].set_pulse_width_range(servo_cfg.pulse_min, servo_cfg.pulse_max)
+                kit.servo[channel].actuation_range = 180
+            except Exception as e:
+                print(f"[SERVOKIT] Warning: Could not configure channel {channel}: {e}")
+        
+        # Configure continuous servo on channel 0 (hopper)
+        try:
+            kit.continuous_servo[0].set_pulse_width_range(1000, 2000)
+        except Exception as e:
+            print(f"[SERVOKIT] Warning: Could not configure hopper channel: {e}")
+        
         print(f"[SERVOKIT] ✓ Initialized {servo_cfg.num_channels} channels at 0x{servo_cfg.pca_address:02x}")
         return kit
     except Exception as e:
