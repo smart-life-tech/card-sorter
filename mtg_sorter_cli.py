@@ -43,19 +43,21 @@ import requests
 @dataclass
 class ServoConfig:
     # PCA9685 channel numbers (0-15)
-    # Channel 0 is reserved for card hopper
-    hopper: int = 0              # Card hopper/dispenser servo
-    price_bin: int = 1           # High-value cards bin
-    combined_bin: int = 2        # Multi-color/low-value cards bin
-    white_blue_bin: int = 3      # White/Blue mono-color bin
-    black_bin: int = 4           # Black mono-color bin
-    red_bin: int = 5             # Red mono-color bin
-    green_bin: int = 6           # Green mono-color bin
+    # Channel 0 is reserved for card hopper (360° continuous rotation)
+    hopper: int = 0              # Card hopper/dispenser servo (360° continuous)
+    price_bin: int = 1           # High-value cards bin (SG90 0-180°)
+    combined_bin: int = 2        # Multi-color/low-value cards bin (SG90 0-180°)
+    white_blue_bin: int = 3      # White/Blue mono-color bin (SG90 0-180°)
+    black_bin: int = 4           # Black mono-color bin (SG90 0-180°)
+    red_bin: int = 5             # Red mono-color bin (SG90 0-180°)
+    green_bin: int = 6           # Green mono-color bin (SG90 0-180°)
     extra_bin: int = 7           # Extra bin (future use)
-    pulse_open_us: int = 2000    # ~90 degrees
-    pulse_close_us: int = 1000   # ~0 degrees
-    hopper_dispense_us: int = 1500  # Hopper dispense position
-    hopper_rest_us: int = 1000      # Hopper rest position
+    # SG90 servo pulse widths (0-180° positional servos)
+    pulse_open_us: int = 2000    # 180 degrees (fully open)
+    pulse_close_us: int = 1000   # 0 degrees (fully closed)
+    # 360° continuous rotation servo (hopper)
+    hopper_dispense_us: int = 1500  # Rotation speed/direction
+    hopper_rest_us: int = 1000      # Stop position
     pca_address: int = 0x40      # Default PCA9685 I2C address
 
 @dataclass
@@ -99,26 +101,32 @@ def setup_pca9685(servo_cfg: ServoConfig, mock: bool) -> Optional[any]:
         return None
 
 
-def move_servo(pca: Optional[any], name: str, channel: int, pulse_open_us: int, pulse_close_us: int, dwell_s: float = 0.3, mock: bool = True) -> None:
-    """Move a standard positional servo (0-180°) - for channels 1-15"""
+def move_servo(pca: Optional[any], name: str, channel: int, pulse_open_us: int, pulse_close_us: int, dwell_s: float = 0.5, mock: bool = True) -> None:
+    """Move a standard positional servo (0-180°) - for channels 1-15 (SG90 servos)"""
     if channel < 0 or channel > 15:
         print(f"[ERROR] Invalid servo channel {channel} for {name}")
         return
     
     if mock or pca is None:
         print(f"[SERVO] {name} (ch {channel}) -> OPEN ({pulse_open_us}µs) ... CLOSE ({pulse_close_us}µs)")
-        time.sleep(dwell_s)
+        time.sleep(dwell_s * 2)  # Mock takes longer to simulate movement
         return
     
-    open_val = int(pulse_open_us * 4096 / 20000.0)
-    close_val = int(pulse_close_us * 4096 / 20000.0)
+    # Convert microseconds to duty cycle value (0-4095)
+    # PCA9685 at 50Hz: 20ms period = 20000µs
+    # duty_cycle = (pulse_width_us / 20000) * 4096
+    open_val = int((pulse_open_us / 20000.0) * 4096)
+    close_val = int((pulse_close_us / 20000.0) * 4096)
+    
+    print(f"[DEBUG] Channel {channel}: open_val={open_val}, close_val={close_val}")
     
     try:
-        print(f"[SERVO] {name} (ch {channel}) -> OPEN", end="", flush=True)
+        print(f"[SERVO] {name} (ch {channel}) -> OPEN ({pulse_open_us}µs)", end="", flush=True)
         pca.channels[channel].duty_cycle = open_val
         time.sleep(dwell_s)
-        print(" ... CLOSE", flush=True)
+        print(f" ... CLOSE ({pulse_close_us}µs)", flush=True)
         pca.channels[channel].duty_cycle = close_val
+        time.sleep(0.3)  # Give servo time to reach closed position
     except Exception as e:
         print(f"\n[ERROR] Failed to move servo {name}: {e}")
 
@@ -134,15 +142,19 @@ def move_continuous_servo(pca: Optional[any], name: str, channel: int, rotate_us
         time.sleep(duration_s)
         return
     
-    rotate_val = int(rotate_us * 4096 / 20000.0)
-    stop_val = int(stop_us * 4096 / 20000.0)
+    # Convert microseconds to duty cycle value
+    rotate_val = int((rotate_us / 20000.0) * 4096)
+    stop_val = int((stop_us / 20000.0) * 4096)
+    
+    print(f"[DEBUG] Channel {channel}: rotate_val={rotate_val}, stop_val={stop_val}")
     
     try:
-        print(f"[CONTINUOUS SERVO] {name} (ch {channel}) -> ROTATE", end="", flush=True)
+        print(f"[CONTINUOUS SERVO] {name} (ch {channel}) -> ROTATE ({rotate_us}µs)", end="", flush=True)
         pca.channels[channel].duty_cycle = rotate_val
         time.sleep(duration_s)
-        print(" ... STOP", flush=True)
+        print(f" ... STOP ({stop_us}µs)", flush=True)
         pca.channels[channel].duty_cycle = stop_val
+        time.sleep(0.2)  # Brief pause after stopping
     except Exception as e:
         print(f"\n[ERROR] Failed to move continuous servo {name}: {e}")
 
