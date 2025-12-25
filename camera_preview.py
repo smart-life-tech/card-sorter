@@ -16,7 +16,6 @@ import os
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from card_sorter.capture import open_camera, detect_card_and_warp
 from card_sorter.config_loader import AppConfig
 
 
@@ -31,7 +30,6 @@ class CameraPreview:
         self.cap = None
         self.running = False
         self.frame_count = 0
-        self.card_detected = False
         
         # Create GUI
         self._build_layout()
@@ -66,11 +64,6 @@ class CameraPreview:
         self.frame_var = tk.StringVar(value="0")
         ttk.Label(info_frame, textvariable=self.frame_var).pack(side=tk.LEFT, padx=5)
         
-        ttk.Label(info_frame, text="Card detected:").pack(side=tk.LEFT, padx=20)
-        self.card_var = tk.StringVar(value="No")
-        self.card_label = ttk.Label(info_frame, textvariable=self.card_var, foreground="red")
-        self.card_label.pack(side=tk.LEFT, padx=5)
-        
         # Controls
         control_frame = ttk.Frame(main_frame)
         control_frame.pack(fill=tk.X, pady=10)
@@ -79,11 +72,8 @@ class CameraPreview:
         
         # Help text
         help_text = (
-            "Tips for correct camera placement:\n"
-            "• Card should fill most of the frame\n"
-            "• Card should be straight/perpendicular to camera\n"
-            "• Green rectangle shows detected card area\n"
-            "• Adjust until 'Card detected: Yes' appears consistently"
+            "Live camera feed\n"
+            "Check if camera is positioned correctly and image is clear"
         )
         help_label = ttk.Label(main_frame, text=help_text, justify=tk.LEFT, foreground="gray")
         help_label.pack(fill=tk.X, pady=10)
@@ -105,10 +95,14 @@ class CameraPreview:
         """Main preview loop running in background thread"""
         try:
             # Open camera
-            self.cap = open_camera(self.resolution, self.camera_idx)
+            self.cap = cv2.VideoCapture(self.camera_idx)
             if not self.cap or not self.cap.isOpened():
                 self.root.after(0, lambda: self.status_var.set("ERROR: Camera not found"))
                 return
+            
+            # Set resolution
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
             
             self.root.after(0, lambda: self.status_var.set("Camera ready"))
             
@@ -120,22 +114,18 @@ class CameraPreview:
                 
                 self.frame_count += 1
                 
-                # Detect card
-                warped = detect_card_and_warp(frame)
-                self.card_detected = warped is not None
-                
                 # Convert frame for display
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
-                # Draw card detection box if card detected
-                if self.card_detected:
-                    # Draw a simple border to show where card was detected
-                    h, w = frame.shape[:2]
-                    cv2.rectangle(frame_rgb, (10, 10), (w-10, h-10), (0, 255, 0), 3)
+                # Resize for display
+                h, w = frame_rgb.shape[:2]
+                if w > 640 or h > 480:
+                    scale = min(640/w, 480/h)
+                    new_w, new_h = int(w*scale), int(h*scale)
+                    frame_rgb = cv2.resize(frame_rgb, (new_w, new_h))
                 
                 # Convert to PhotoImage
                 img = Image.fromarray(frame_rgb)
-                img.thumbnail((640, 480), Image.Resampling.LANCZOS)
                 photo = ImageTk.PhotoImage(img)
                 
                 # Update GUI
@@ -151,15 +141,7 @@ class CameraPreview:
             self.preview_label.image = photo
             
             self.frame_var.set(str(self.frame_count))
-            
-            if self.card_detected:
-                self.card_var.set("Yes ✓")
-                self.card_label.config(foreground="green")
-                self.status_var.set("Card detected!")
-            else:
-                self.card_var.set("No")
-                self.card_label.config(foreground="red")
-                self.status_var.set("Waiting for card...")
+            self.status_var.set("Camera active")
 
 
 def main():
