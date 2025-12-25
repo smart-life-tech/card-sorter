@@ -645,11 +645,21 @@ def test_camera(cfg: AppConfig):
         print(f"[ERROR] Camera test failed: {e}\n")
 
 
-def test_ocr_live(cfg: AppConfig, duration: int = 60, camera_idx: int = 0):
-    """Test OCR with live camera feed"""
+def test_ocr_live(cfg: AppConfig, duration: int = 60, camera_idx: int = 0, roi: Optional[Tuple[float, float, float, float]] = None):
+    """Test OCR with live camera feed
+    
+    Args:
+        cfg: AppConfig with settings
+        duration: Test duration in seconds
+        camera_idx: Camera index (0 = default)
+        roi: Optional custom ROI (x1, y1, x2, y2) as fractions 0.0-1.0. If None, uses cfg.name_roi
+    """
     if cv2 is None:
         print("[ERROR] OpenCV not installed")
         return
+    
+    # Use custom ROI if provided, otherwise use config ROI
+    test_roi = roi if roi is not None else cfg.name_roi
     
     print(f"\n[OCR TEST] Live camera OCR test ({duration}s)")
     print("[OCR TEST] Hold cards in front of camera")
@@ -661,14 +671,23 @@ def test_ocr_live(cfg: AppConfig, duration: int = 60, camera_idx: int = 0):
             print(f"[ERROR] Camera {camera_idx} not found")
             return
         
-        print(f"[OCR TEST] Camera opened, resolution: {int(cap.get(3))}x{int(cap.get(4))}")
-        print(f"[OCR TEST] ROI: x={cfg.name_roi[0]:.0%}-{cfg.name_roi[2]:.0%}, y={cfg.name_roi[1]:.0%}-{cfg.name_roi[3]:.0%}\n")
+        w = int(cap.get(3))
+        h = int(cap.get(4))
+        print(f"[OCR TEST] Camera opened, resolution: {w}x{h}")
+        print(f"[OCR TEST] ROI: x={test_roi[0]:.0%}-{test_roi[2]:.0%}, y={test_roi[1]:.0%}-{test_roi[3]:.0%}")
+        
+        # Calculate ROI pixel coordinates for display
+        x1, y1 = int(w * test_roi[0]), int(h * test_roi[1])
+        x2, y2 = int(w * test_roi[2]), int(h * test_roi[3])
+        print(f"[OCR TEST] ROI pixels: ({x1}, {y1}) to ({x2}, {y2})")
+        print(f"[OCR TEST] Saving ROI images to 'ocr_roi_*.png' for debugging\n")
         
         start = time.time()
         frame_count = 0
         card_count = 0
         ocr_success = 0
         detected_names = {}
+        debug_count = 0
         
         while time.time() - start < duration:
             ret, frame = cap.read()
@@ -688,13 +707,27 @@ def test_ocr_live(cfg: AppConfig, duration: int = 60, camera_idx: int = 0):
             card_count += 1
             print(f"  [{card_count}] Card detected (frame {frame_count})... ", end="", flush=True)
             
+            # Extract ROI region for visual inspection
+            if debug_count < 5:  # Save first 5 detections
+                h_warp, w_warp = warped.shape[:2]
+                x1_roi, y1_roi = int(w_warp * test_roi[0]), int(h_warp * test_roi[1])
+                x2_roi, y2_roi = int(w_warp * test_roi[2]), int(h_warp * test_roi[3])
+                roi_img = warped[y1_roi:y2_roi, x1_roi:x2_roi]
+                
+                if roi_img.size > 0:
+                    try:
+                        cv2.imwrite(f"ocr_roi_{card_count:03d}.png", roi_img)
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to save ROI image: {e}")
+            
             # Run OCR
-            name = ocr_name_from_image(warped, cfg.name_roi)
+            name = ocr_name_from_image(warped, test_roi)
             
             if name:
                 ocr_success += 1
                 print(f"✓ '{name}'")
                 detected_names[name] = detected_names.get(name, 0) + 1
+                debug_count += 1
             else:
                 print(f"✗ OCR failed (ROI may be wrong or text not clear)")
         
@@ -714,6 +747,10 @@ def test_ocr_live(cfg: AppConfig, duration: int = 60, camera_idx: int = 0):
             print(f"\n  Detected cards:")
             for name, count in sorted(detected_names.items(), key=lambda x: -x[1]):
                 print(f"    - {name}: {count}x")
+        
+        if debug_count > 0:
+            print(f"\n  Debug: Saved {min(debug_count, 5)} ROI images (ocr_roi_001.png - ocr_roi_{min(debug_count, 5):03d}.png)")
+            print(f"  Check these images to see what text the OCR is reading from the ROI region")
         
         print(f"{'='*60}\n")
     
@@ -948,6 +985,8 @@ def main():
     parser.add_argument('--directory', type=str, help='Directory for test-ocr-dir')
     parser.add_argument('--duration', type=int, default=60, help='Duration in seconds for test-ocr-live (default: 60)')
     parser.add_argument('--camera', type=int, default=0, help='Camera device index (default: 0)')
+    parser.add_argument('--roi', type=float, nargs=4, metavar=('X1', 'Y1', 'X2', 'Y2'),
+                       help='Custom ROI for test-ocr-live as fractions (e.g., --roi 0.08 0.08 0.92 0.22). Default uses config value')
     
     args = parser.parse_args()
     
@@ -1003,7 +1042,8 @@ def main():
             test_i2c()
         
         elif args.command == 'test-ocr-live':
-            test_ocr_live(cfg, duration=args.duration, camera_idx=args.camera)
+            roi = tuple(args.roi) if args.roi else None
+            test_ocr_live(cfg, duration=args.duration, camera_idx=args.camera, roi=roi)
         
         elif args.command == 'test-ocr-image':
             if not args.image:
