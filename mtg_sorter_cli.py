@@ -91,52 +91,120 @@ def setup_servokit(servo_cfg: ServoConfig, mock: bool) -> Optional[any]:
     if mock:
         print(f"[MOCK SERVOKIT] Using mock servo outputs ({servo_cfg.num_channels} channels)")
         return None
+    
+    print(f"\n[SERVOKIT DEBUG] Starting initialization...")
+    print(f"[SERVOKIT DEBUG] Channels: {servo_cfg.num_channels}")
+    print(f"[SERVOKIT DEBUG] I2C Address: 0x{servo_cfg.pca_address:02x}")
+    print(f"[SERVOKIT DEBUG] Pulse range: {servo_cfg.pulse_min}µs - {servo_cfg.pulse_max}µs")
+    
     try:
+        print(f"[SERVOKIT DEBUG] Creating ServoKit instance...")
         kit = ServoKit(channels=servo_cfg.num_channels, address=servo_cfg.pca_address)
+        print(f"[SERVOKIT DEBUG] ✓ ServoKit instance created successfully")
         
         # Configure pulse width range for all positional servos (channels 1-15)
         # Channel 0 is for continuous rotation servo (hopper)
-        print(f"[SERVOKIT] Configuring pulse widths: {servo_cfg.pulse_min}µs - {servo_cfg.pulse_max}µs")
+        print(f"[SERVOKIT DEBUG] Configuring positional servos (channels 1-15)...")
+        configured_channels = []
+        failed_channels = []
+        
         for channel in range(1, 16):  # Skip channel 0 (hopper)
             try:
+                print(f"[SERVOKIT DEBUG]   Channel {channel}: Setting pulse width range...", end="", flush=True)
                 kit.servo[channel].set_pulse_width_range(servo_cfg.pulse_min, servo_cfg.pulse_max)
                 kit.servo[channel].actuation_range = 180
+                configured_channels.append(channel)
+                print(" ✓")
             except Exception as e:
-                print(f"[SERVOKIT] Warning: Could not configure channel {channel}: {e}")
+                failed_channels.append(channel)
+                print(f" ✗ Error: {e}")
+        
+        print(f"[SERVOKIT DEBUG] Configured channels: {configured_channels}")
+        if failed_channels:
+            print(f"[SERVOKIT DEBUG] Failed channels: {failed_channels}")
         
         # Configure continuous servo on channel 0 (hopper)
+        print(f"[SERVOKIT DEBUG] Configuring continuous servo (channel 0)...")
         try:
             kit.continuous_servo[0].set_pulse_width_range(1000, 2000)
+            print(f"[SERVOKIT DEBUG] ✓ Channel 0 (hopper) configured")
         except Exception as e:
-            print(f"[SERVOKIT] Warning: Could not configure hopper channel: {e}")
+            print(f"[SERVOKIT DEBUG] ✗ Channel 0 (hopper) failed: {e}")
         
         print(f"[SERVOKIT] ✓ Initialized {servo_cfg.num_channels} channels at 0x{servo_cfg.pca_address:02x}")
+        print(f"[SERVOKIT] IMPORTANT: Ensure servos have external 5-6V power supply!")
+        print(f"[SERVOKIT] IMPORTANT: Raspberry Pi 3.3V/5V pins CANNOT power servos!\n")
         return kit
     except Exception as e:
         print(f"[SERVOKIT] ✗ Failed to initialize: {e}")
+        print(f"[SERVOKIT DEBUG] Exception type: {type(e).__name__}")
+        print(f"[SERVOKIT DEBUG] Exception details: {str(e)}")
+        print(f"\n[TROUBLESHOOTING] If initialization failed:")
+        print(f"  1. Check I2C is enabled: sudo raspi-config -> Interface Options -> I2C")
+        print(f"  2. Verify PCA9685 connection: i2cdetect -y 1")
+        print(f"  3. Check wiring: SDA->GPIO2, SCL->GPIO3, VCC->3.3V, GND->GND")
+        print(f"  4. Install dependencies: pip3 install adafruit-circuitpython-servokit\n")
         return None
 
 
 def move_servo(kit: Optional[any], name: str, channel: int, angle_open: int, angle_close: int, dwell_s: float = 0.5, mock: bool = True) -> None:
     """Move a standard positional servo (0-180°) - for channels 1-15 (SG90 servos)"""
+    print(f"\n[SERVO DEBUG] ========== SERVO MOVEMENT START ==========")
+    print(f"[SERVO DEBUG] Name: {name}")
+    print(f"[SERVO DEBUG] Channel: {channel}")
+    print(f"[SERVO DEBUG] Target angles: OPEN={angle_open}°, CLOSE={angle_close}°")
+    print(f"[SERVO DEBUG] Dwell time: {dwell_s}s")
+    print(f"[SERVO DEBUG] Mock mode: {mock}")
+    print(f"[SERVO DEBUG] Kit object: {kit}")
+    
     if channel < 0 or channel > 15:
-        print(f"[ERROR] Invalid servo channel {channel} for {name}")
+        print(f"[SERVO ERROR] Invalid servo channel {channel} for {name}")
+        print(f"[SERVO DEBUG] Valid channels: 0-15")
         return
     
     if mock or kit is None:
-        print(f"[SERVO] {name} (ch {channel}) -> OPEN ({angle_open}°) ... CLOSE ({angle_close}°)")
+        print(f"[SERVO MOCK] {name} (ch {channel}) -> OPEN ({angle_open}°) ... CLOSE ({angle_close}°)")
+        print(f"[SERVO DEBUG] Running in MOCK mode - no hardware commands sent")
         time.sleep(dwell_s * 2)  # Mock takes longer to simulate movement
+        print(f"[SERVO DEBUG] ========== SERVO MOVEMENT END (MOCK) ==========\n")
         return
     
     try:
-        print(f"[SERVO] {name} (ch {channel}) -> OPEN ({angle_open}°)", end="", flush=True)
+        print(f"[SERVO HARDWARE] Attempting to move {name} on channel {channel}")
+        print(f"[SERVO DEBUG] Step 1: Setting angle to {angle_open}° (OPEN)...", end="", flush=True)
+        
+        # Set to open position
         kit.servo[channel].angle = angle_open
+        print(f" ✓ Command sent")
+        print(f"[SERVO DEBUG] Waiting {dwell_s}s for servo to reach position...")
         time.sleep(dwell_s)
-        print(f" ... CLOSE ({angle_close}°)", flush=True)
+        
+        print(f"[SERVO DEBUG] Step 2: Setting angle to {angle_close}° (CLOSE)...", end="", flush=True)
+        
+        # Set to close position
         kit.servo[channel].angle = angle_close
+        print(f" ✓ Command sent")
+        print(f"[SERVO DEBUG] Waiting 0.3s for servo to reach position...")
         time.sleep(0.3)  # Give servo time to reach closed position
+        
+        print(f"[SERVO SUCCESS] {name} movement complete")
+        print(f"[SERVO DEBUG] ========== SERVO MOVEMENT END (SUCCESS) ==========\n")
+        
+        # Verify movement
+        print(f"[SERVO VERIFY] If servo did NOT move, check:")
+        print(f"  1. External power supply connected (5-6V, 1-2A per servo)")
+        print(f"  2. Servo signal wire connected to channel {channel} on PCA9685")
+        print(f"  3. Servo power (red) and ground (brown/black) connected")
+        print(f"  4. PCA9685 V+ terminal has external power (NOT from Pi)")
+        print(f"  5. Common ground between Pi and servo power supply")
+        print(f"  6. Servo is functional (test with another controller)")
+        
     except Exception as e:
-        print(f"\n[ERROR] Failed to move servo {name}: {e}")
+        print(f"\n[SERVO ERROR] Failed to move servo {name}: {e}")
+        print(f"[SERVO DEBUG] Exception type: {type(e).__name__}")
+        print(f"[SERVO DEBUG] Exception details: {str(e)}")
+        print(f"[SERVO DEBUG] Channel: {channel}")
+        print(f"[SERVO DEBUG] ========== SERVO MOVEMENT END (ERROR) ==========\n")
 
 
 def move_continuous_servo(kit: Optional[any], name: str, channel: int, throttle: float, duration_s: float = 0.5, mock: bool = True) -> None:
@@ -145,24 +213,54 @@ def move_continuous_servo(kit: Optional[any], name: str, channel: int, throttle:
     Args:
         throttle: -1.0 to 1.0 (negative = reverse, 0 = stop, positive = forward)
     """
+    print(f"\n[CONTINUOUS SERVO DEBUG] ========== CONTINUOUS SERVO START ==========")
+    print(f"[CONTINUOUS SERVO DEBUG] Name: {name}")
+    print(f"[CONTINUOUS SERVO DEBUG] Channel: {channel}")
+    print(f"[CONTINUOUS SERVO DEBUG] Throttle: {throttle} (-1.0=reverse, 0=stop, 1.0=forward)")
+    print(f"[CONTINUOUS SERVO DEBUG] Duration: {duration_s}s")
+    print(f"[CONTINUOUS SERVO DEBUG] Mock mode: {mock}")
+    print(f"[CONTINUOUS SERVO DEBUG] Kit object: {kit}")
+    
     if channel < 0 or channel > 15:
-        print(f"[ERROR] Invalid servo channel {channel} for {name}")
+        print(f"[CONTINUOUS SERVO ERROR] Invalid servo channel {channel} for {name}")
         return
     
     if mock or kit is None:
-        print(f"[CONTINUOUS SERVO] {name} (ch {channel}) -> ROTATE (throttle={throttle}) for {duration_s}s ... STOP")
+        print(f"[CONTINUOUS SERVO MOCK] {name} (ch {channel}) -> ROTATE (throttle={throttle}) for {duration_s}s ... STOP")
+        print(f"[CONTINUOUS SERVO DEBUG] Running in MOCK mode - no hardware commands sent")
         time.sleep(duration_s)
+        print(f"[CONTINUOUS SERVO DEBUG] ========== CONTINUOUS SERVO END (MOCK) ==========\n")
         return
     
     try:
-        print(f"[CONTINUOUS SERVO] {name} (ch {channel}) -> ROTATE (throttle={throttle})", end="", flush=True)
+        print(f"[CONTINUOUS SERVO HARDWARE] Attempting to rotate {name} on channel {channel}")
+        print(f"[CONTINUOUS SERVO DEBUG] Step 1: Setting throttle to {throttle}...", end="", flush=True)
+        
         kit.continuous_servo[channel].throttle = throttle
+        print(f" ✓ Command sent")
+        print(f"[CONTINUOUS SERVO DEBUG] Rotating for {duration_s}s...")
         time.sleep(duration_s)
-        print(" ... STOP", flush=True)
+        
+        print(f"[CONTINUOUS SERVO DEBUG] Step 2: Stopping (throttle=0)...", end="", flush=True)
         kit.continuous_servo[channel].throttle = 0  # Stop
+        print(f" ✓ Command sent")
         time.sleep(0.2)  # Brief pause after stopping
+        
+        print(f"[CONTINUOUS SERVO SUCCESS] {name} rotation complete")
+        print(f"[CONTINUOUS SERVO DEBUG] ========== CONTINUOUS SERVO END (SUCCESS) ==========\n")
+        
+        # Verify movement
+        print(f"[CONTINUOUS SERVO VERIFY] If servo did NOT rotate, check:")
+        print(f"  1. Servo is a 360° continuous rotation servo (not standard 0-180°)")
+        print(f"  2. External power supply connected (5-6V, 1-2A)")
+        print(f"  3. Servo signal wire connected to channel {channel} on PCA9685")
+        print(f"  4. Throttle value is sufficient (try 0.5 or higher)")
+        
     except Exception as e:
-        print(f"\n[ERROR] Failed to move continuous servo {name}: {e}")
+        print(f"\n[CONTINUOUS SERVO ERROR] Failed to move continuous servo {name}: {e}")
+        print(f"[CONTINUOUS SERVO DEBUG] Exception type: {type(e).__name__}")
+        print(f"[CONTINUOUS SERVO DEBUG] Exception details: {str(e)}")
+        print(f"[CONTINUOUS SERVO DEBUG] ========== CONTINUOUS SERVO END (ERROR) ==========\n")
 
 
 def cleanup_servokit(kit: Optional[any]) -> None:
@@ -367,7 +465,12 @@ def test_all_channels(kit, servo_cfg, mock: bool):
     
     if mock or kit is None:
         print("[MOCK] Skipping hardware test in mock mode\n")
+        print("[DEBUG] To test hardware, run with --no-mock flag")
         return
+    
+    print(f"[DEBUG] Kit object type: {type(kit)}")
+    print(f"[DEBUG] Kit object: {kit}")
+    print(f"[DEBUG] Starting comprehensive channel test...\n")
     
     # Test angles to try
     test_angles = [0, 45, 90, 135, 180]
@@ -376,32 +479,53 @@ def test_all_channels(kit, servo_cfg, mock: bool):
         print(f"\n{'='*60}")
         print(f"Channel {channel}:")
         print(f"{'='*60}")
+        print(f"[DEBUG] Testing channel {channel} with angles: {test_angles}")
         
         for angle in test_angles:
             print(f"  Setting {angle}°...", end="", flush=True)
             
             try:
+                print(f" [sending command]...", end="", flush=True)
                 kit.servo[channel].angle = angle
+                print(f" [waiting 0.8s]...", end="", flush=True)
                 time.sleep(0.8)  # Give servo time to move
                 print(" ✓")
             except Exception as e:
                 print(f" ✗ Error: {e}")
+                print(f"    [DEBUG] Exception type: {type(e).__name__}")
         
         # Return to neutral
         try:
+            print(f"  Returning to 90° (neutral)...", end="", flush=True)
             kit.servo[channel].angle = 90
-            print("  Returning to 90°...")
-        except Exception:
-            pass
+            time.sleep(0.3)
+            print(" ✓")
+        except Exception as e:
+            print(f" ✗ Error: {e}")
         
         time.sleep(0.3)
     
     print(f"\n{'='*60}")
     print("[TEST] All 16 channels tested")
-    print("[INFO] If you saw NO movement on channels 1-15, check:")
-    print("  1. Power supply to servos (5-6V with sufficient current)")
-    print("  2. Servo connections (signal, power, ground)")
-    print("  3. Servo type (SG90 or similar 0-180° servos)")
+    print(f"{'='*60}")
+    print("\n[TROUBLESHOOTING] If you saw NO movement on ANY channel:")
+    print("  1. POWER SUPPLY:")
+    print("     - Servos need external 5-6V power (1-2A per servo)")
+    print("     - Connect power supply to PCA9685 V+ and GND terminals")
+    print("     - DO NOT power servos from Raspberry Pi 5V pin!")
+    print("  2. WIRING:")
+    print("     - PCA9685 to Pi: SDA->GPIO2, SCL->GPIO3, VCC->3.3V, GND->GND")
+    print("     - Servo to PCA9685: Signal->Channel pin, Red->V+, Brown/Black->GND")
+    print("     - Common ground: Connect Pi GND to power supply GND")
+    print("  3. I2C CONNECTION:")
+    print("     - Run: i2cdetect -y 1")
+    print("     - Should show '40' at address 0x40")
+    print("  4. SERVO TYPE:")
+    print("     - Standard servos: 0-180° (SG90, MG90S, etc.)")
+    print("     - Continuous servos: 360° rotation (for hopper)")
+    print("  5. TEST SERVO SEPARATELY:")
+    print("     - Try servo with Arduino or servo tester")
+    print("     - Verify servo is functional")
     print(f"{'='*60}\n")
 
 
