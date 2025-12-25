@@ -629,6 +629,183 @@ def test_camera(cfg: AppConfig):
         print(f"[ERROR] Camera test failed: {e}\n")
 
 
+def test_ocr_live(cfg: AppConfig, duration: int = 60, camera_idx: int = 0):
+    """Test OCR with live camera feed"""
+    if cv2 is None:
+        print("[ERROR] OpenCV not installed")
+        return
+    
+    print(f"\n[OCR TEST] Live camera OCR test ({duration}s)")
+    print("[OCR TEST] Hold cards in front of camera")
+    print("[OCR TEST] Press Ctrl+C to stop\n")
+    
+    try:
+        cap = cv2.VideoCapture(camera_idx)
+        if not cap.isOpened():
+            print(f"[ERROR] Camera {camera_idx} not found")
+            return
+        
+        start = time.time()
+        frame_count = 0
+        card_count = 0
+        ocr_success = 0
+        detected_names = {}
+        
+        while time.time() - start < duration:
+            ret, frame = cap.read()
+            if not ret:
+                print("[ERROR] Failed to read frame")
+                break
+            
+            frame_count += 1
+            
+            # Detect card
+            warped = detect_card_and_warp(frame)
+            if warped is None:
+                if frame_count % 30 == 0:
+                    print(f"  [{frame_count} frames] Waiting for card...")
+                continue
+            
+            card_count += 1
+            
+            # Run OCR
+            name = ocr_name_from_image(warped, cfg.name_roi)
+            
+            if name:
+                ocr_success += 1
+                print(f"  [{card_count}] ✓ {name}")
+                detected_names[name] = detected_names.get(name, 0) + 1
+            else:
+                print(f"  [{card_count}] ⚠ Card detected but OCR failed")
+        
+        cap.release()
+        
+        elapsed = time.time() - start
+        print(f"\n{'='*60}")
+        print("[OCR TEST] Results:")
+        print(f"  Duration: {elapsed:.1f}s")
+        print(f"  Frames processed: {frame_count}")
+        print(f"  Cards detected: {card_count}")
+        print(f"  OCR success: {ocr_success}")
+        if card_count > 0:
+            print(f"  Success rate: {ocr_success*100//card_count}%")
+        
+        if detected_names:
+            print(f"\n  Detected cards:")
+            for name, count in sorted(detected_names.items(), key=lambda x: -x[1]):
+                print(f"    - {name}: {count}x")
+        
+        print(f"{'='*60}\n")
+    
+    except KeyboardInterrupt:
+        cap.release()
+        print("\n[OCR TEST] Stopped by user\n")
+    except Exception as e:
+        print(f"[ERROR] OCR test failed: {e}\n")
+
+
+def test_ocr_image(image_path: str, roi: Optional[Tuple[float, float, float, float]] = None):
+    """Test OCR on a single image file"""
+    if cv2 is None:
+        print("[ERROR] OpenCV not installed")
+        return
+    
+    from pathlib import Path
+    path = Path(image_path)
+    
+    if not path.exists():
+        print(f"[ERROR] File not found: {image_path}")
+        return
+    
+    print(f"\n[OCR TEST] Testing: {path.name}")
+    
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            print(f"[ERROR] Failed to read image: {image_path}")
+            return
+        
+        print(f"  Image size: {img.shape}")
+        
+        if roi is None:
+            roi = (0.08, 0.08, 0.92, 0.22)  # Default ROI
+        
+        print(f"  ROI: x={roi[0]:.0%}-{roi[2]:.0%}, y={roi[1]:.0%}-{roi[3]:.0%}")
+        
+        # Run OCR
+        name = ocr_name_from_image(img, roi)
+        
+        if name:
+            print(f"\n[OCR TEST] ✓ Detected: '{name}'")
+        else:
+            print(f"\n[OCR TEST] ✗ No text detected")
+        
+        print()
+    
+    except Exception as e:
+        print(f"[ERROR] OCR test failed: {e}\n")
+
+
+def test_ocr_directory(directory: str):
+    """Test OCR on all images in a directory"""
+    if cv2 is None:
+        print("[ERROR] OpenCV not installed")
+        return
+    
+    from pathlib import Path
+    path = Path(directory)
+    
+    if not path.is_dir():
+        print(f"[ERROR] Directory not found: {directory}")
+        return
+    
+    images = list(path.glob("*.png")) + list(path.glob("*.jpg")) + list(path.glob("*.jpeg"))
+    
+    if not images:
+        print(f"[ERROR] No images found in {directory}")
+        return
+    
+    print(f"\n[OCR TEST] Testing {len(images)} images from {directory}")
+    print(f"{'='*60}\n")
+    
+    roi = (0.08, 0.08, 0.92, 0.22)
+    success = 0
+    detected = {}
+    
+    try:
+        for i, img_path in enumerate(sorted(images), 1):
+            img = cv2.imread(str(img_path))
+            if img is None:
+                print(f"  [{i}/{len(images)}] ✗ {img_path.name} (failed to read)")
+                continue
+            
+            name = ocr_name_from_image(img, roi)
+            
+            if name:
+                print(f"  [{i}/{len(images)}] ✓ {img_path.name}")
+                print(f"                → {name}")
+                detected[name] = detected.get(name, 0) + 1
+                success += 1
+            else:
+                print(f"  [{i}/{len(images)}] ⚠ {img_path.name} (OCR failed)")
+        
+        print(f"\n{'='*60}")
+        print("[OCR TEST] Results:")
+        print(f"  Total images: {len(images)}")
+        print(f"  OCR success: {success}")
+        print(f"  Success rate: {success*100//len(images)}%")
+        
+        if detected:
+            print(f"\n  Detected cards:")
+            for name, count in sorted(detected.items(), key=lambda x: -x[1]):
+                print(f"    - {name}: {count}x")
+        
+        print(f"{'='*60}\n")
+    
+    except Exception as e:
+        print(f"[ERROR] Directory test failed: {e}\n")
+
+
 def test_i2c():
     """Test I2C connection"""
     print("\n[TEST] Testing I2C...")
@@ -738,7 +915,7 @@ def run_sorter(cfg: AppConfig, servo_cfg: ServoConfig, kit, mode: str, count: in
 
 def main():
     parser = argparse.ArgumentParser(description="MTG Card Sorter - CLI Version")
-    parser.add_argument('command', choices=['test-servo', 'test-hopper', 'test-all', 'test-all-channels', 'test-camera', 'test-i2c', 'run'],
+    parser.add_argument('command', choices=['test-servo', 'test-hopper', 'test-all', 'test-all-channels', 'test-camera', 'test-i2c', 'test-ocr-live', 'test-ocr-image', 'test-ocr-dir', 'run'],
                        help='Command to execute')
     parser.add_argument('--bin', type=str, help='Bin name for test-servo (hopper, price, combined, white_blue, black, red, green)')
     parser.add_argument('--mode', type=str, default='price', choices=['price', 'color'],
@@ -747,6 +924,10 @@ def main():
     parser.add_argument('--threshold', type=float, default=0.25, help='Price threshold in USD (default: 0.25)')
     parser.add_argument('--mock', action='store_true', help='Enable mock mode (no hardware)')
     parser.add_argument('--no-mock', action='store_true', help='Disable mock mode (use hardware)')
+    parser.add_argument('--image', type=str, help='Image file for test-ocr-image')
+    parser.add_argument('--directory', type=str, help='Directory for test-ocr-dir')
+    parser.add_argument('--duration', type=int, default=60, help='Duration in seconds for test-ocr-live (default: 60)')
+    parser.add_argument('--camera', type=int, default=0, help='Camera device index (default: 0)')
     
     args = parser.parse_args()
     
@@ -760,6 +941,7 @@ def main():
         cfg.mock_mode = not is_rpi()
     
     cfg.price_threshold_usd = args.threshold
+    cfg.camera_device_index = args.camera
     
     servo_cfg = ServoConfig()
     
@@ -770,8 +952,11 @@ def main():
     print(f"Platform: {platform.system()}")
     print("=" * 60)
     
-    # Setup hardware
-    kit = setup_servokit(servo_cfg, mock=cfg.mock_mode)
+    # Setup hardware (not needed for OCR-only tests)
+    if args.command != 'test-ocr-live' and args.command != 'test-ocr-image' and args.command != 'test-ocr-dir':
+        kit = setup_servokit(servo_cfg, mock=cfg.mock_mode)
+    else:
+        kit = None
     
     try:
         # Execute command
@@ -797,11 +982,29 @@ def main():
         elif args.command == 'test-i2c':
             test_i2c()
         
+        elif args.command == 'test-ocr-live':
+            test_ocr_live(cfg, duration=args.duration, camera_idx=args.camera)
+        
+        elif args.command == 'test-ocr-image':
+            if not args.image:
+                print("[ERROR] --image required for test-ocr-image")
+                print("Example: python3 mtg_sorter_cli.py test-ocr-image --image card.png")
+                return
+            test_ocr_image(args.image)
+        
+        elif args.command == 'test-ocr-dir':
+            if not args.directory:
+                print("[ERROR] --directory required for test-ocr-dir")
+                print("Example: python3 mtg_sorter_cli.py test-ocr-dir --directory ./captures")
+                return
+            test_ocr_directory(args.directory)
+        
         elif args.command == 'run':
             run_sorter(cfg, servo_cfg, kit, args.mode, args.count)
     
     finally:
-        cleanup_servokit(kit)
+        if kit is not None:
+            cleanup_servokit(kit)
         print("[CLEANUP] Done")
 
 
