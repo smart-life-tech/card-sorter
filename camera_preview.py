@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Simple camera preview GUI for checking camera placement
-Shows live camera feed with card detection outline
+Shows live camera feed with ROI region highlighted
 """
 
 import cv2
@@ -23,13 +23,20 @@ class CameraPreview:
     def __init__(self, root, camera_idx=0, resolution=(640, 480)):
         self.root = root
         self.root.title("Camera Preview - Card Sorter")
-        self.root.geometry("800x600")
+        self.root.geometry("900x700")
         
         self.camera_idx = camera_idx
         self.resolution = resolution
         self.cap = None
         self.running = False
         self.frame_count = 0
+        
+        # Load default ROI from config
+        try:
+            cfg = AppConfig()
+            self.roi = cfg.name_roi  # (x1, y1, x2, y2)
+        except:
+            self.roi = (0.08, 0.08, 0.92, 0.22)  # Default fallback
         
         # Create GUI
         self._build_layout()
@@ -43,40 +50,53 @@ class CameraPreview:
         main_frame = ttk.Frame(self.root, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
+        # Title
+        ttk.Label(main_frame, text="Live Camera Feed with ROI Region", font=("Arial", 12, "bold")).pack(fill=tk.X)
+        
         # Camera preview label
         self.preview_label = tk.Label(main_frame, bg="black", width=640, height=480)
-        self.preview_label.pack(fill=tk.BOTH, expand=True)
+        self.preview_label.pack(fill=tk.BOTH, expand=True, pady=5)
         
         # Status bar
         status_frame = ttk.Frame(main_frame)
-        status_frame.pack(fill=tk.X, pady=10)
+        status_frame.pack(fill=tk.X, pady=5)
         
         ttk.Label(status_frame, text="Status:").pack(side=tk.LEFT)
         self.status_var = tk.StringVar(value="Starting camera...")
         self.status_label = ttk.Label(status_frame, textvariable=self.status_var, foreground="blue")
         self.status_label.pack(side=tk.LEFT, padx=5)
         
-        # Info
-        info_frame = ttk.Frame(main_frame)
+        # Frame counter
+        ttk.Label(status_frame, text="Frames:").pack(side=tk.LEFT, padx=20)
+        self.frame_var = tk.StringVar(value="0")
+        ttk.Label(status_frame, textvariable=self.frame_var).pack(side=tk.LEFT, padx=5)
+        
+        # ROI info
+        info_frame = ttk.LabelFrame(main_frame, text="Current ROI Settings", padding=5)
         info_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(info_frame, text="Frames:").pack(side=tk.LEFT)
-        self.frame_var = tk.StringVar(value="0")
-        ttk.Label(info_frame, textvariable=self.frame_var).pack(side=tk.LEFT, padx=5)
+        roi_text = f"ROI: x={self.roi[0]:.0%}-{self.roi[2]:.0%}, y={self.roi[1]:.0%}-{self.roi[3]:.0%}"
+        ttk.Label(info_frame, text=roi_text, font=("Courier", 10)).pack(side=tk.LEFT)
+        
+        ttk.Label(info_frame, text="(Red rectangle on preview)", foreground="red").pack(side=tk.LEFT, padx=10)
+        
+        # Instructions
+        help_frame = ttk.LabelFrame(main_frame, text="Instructions", padding=5)
+        help_frame.pack(fill=tk.X, pady=5)
+        
+        help_text = (
+            "The RED RECTANGLE shows what region is being sent to OCR.\n"
+            "If it's capturing the wrong area (brown/set symbol), the ROI needs adjustment.\n"
+            "Test with wider ROI: python mtg_sorter_cli.py test-ocr-live --roi 0.0 0.0 1.0 1.0\n"
+            "This will show what the entire card captures to help calibrate."
+        )
+        ttk.Label(help_frame, text=help_text, justify=tk.LEFT).pack(fill=tk.X)
         
         # Controls
         control_frame = ttk.Frame(main_frame)
         control_frame.pack(fill=tk.X, pady=10)
         
         ttk.Button(control_frame, text="Close", command=self.stop_preview).pack(side=tk.LEFT)
-        
-        # Help text
-        help_text = (
-            "Live camera feed\n"
-            "Check if camera is positioned correctly and image is clear"
-        )
-        help_label = ttk.Label(main_frame, text=help_text, justify=tk.LEFT, foreground="gray")
-        help_label.pack(fill=tk.X, pady=10)
     
     def start_preview(self):
         """Start the camera preview thread"""
@@ -117,12 +137,24 @@ class CameraPreview:
                 # Convert frame for display
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
-                # Resize for display
+                # Draw ROI rectangle on the frame
                 h, w = frame_rgb.shape[:2]
-                if w > 640 or h > 480:
-                    scale = min(640/w, 480/h)
-                    new_w, new_h = int(w*scale), int(h*scale)
-                    frame_rgb = cv2.resize(frame_rgb, (new_w, new_h))
+                x1 = int(w * self.roi[0])
+                y1 = int(h * self.roi[1])
+                x2 = int(w * self.roi[2])
+                y2 = int(h * self.roi[3])
+                
+                # Draw red rectangle for ROI
+                cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                
+                # Add text label
+                cv2.putText(frame_rgb, "ROI Region", (x1, y1-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                
+                # Resize for display
+                display_h, display_w = 480, 640
+                if h != display_h or w != display_w:
+                    frame_rgb = cv2.resize(frame_rgb, (display_w, display_h))
                 
                 # Convert to PhotoImage
                 img = Image.fromarray(frame_rgb)
