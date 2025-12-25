@@ -7,7 +7,8 @@ Shows live camera feed with card detection outline
 import cv2
 import tkinter as tk
 from tkinter import ttk
-from PIL import Image, ImageTk
+from PIL import Image
+from PIL import ImageTk
 import threading
 import sys
 import os
