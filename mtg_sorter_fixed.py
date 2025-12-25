@@ -183,100 +183,118 @@ def ocr_name_from_image(img, roi_rel: Tuple[float,float,float,float]) -> Optiona
     if pytesseract is None:
         return None
     
-    h, w = img.shape[:2]
-    x1 = int(roi_rel[0] * w)
-    y1 = int(roi_rel[1] * h)
-    x2 = int(roi_rel[2] * w)
-    y2 = int(roi_rel[3] * h)
-    roi = img[y1:y2, x1:x2]
-    
-    # Convert to grayscale
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    
-    # Multi-step preprocessing for better OCR accuracy
-    # Step 1: Denoise while preserving edges
-    gray = cv2.bilateralFilter(gray, 9, 75, 75)
-    
-    # Step 2: Enhance contrast using CLAHE (Contrast Limited Adaptive Histogram Equalization)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    gray = clahe.apply(gray)
-    
-    # Step 3: Apply morphological operations to clean up text
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-    gray = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
-    
-    # Step 4: Adaptive thresholding for variable lighting conditions
-    # Use Otsu's method first for reference
-    _, otsu_thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    
-    # Also try adaptive threshold
-    adaptive_thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                           cv2.THRESH_BINARY, 11, 2)
-    
-    # Step 5: Upscale for better Tesseract recognition
-    gray = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-    otsu_thresh = cv2.resize(otsu_thresh, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-    adaptive_thresh = cv2.resize(adaptive_thresh, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-    
-    # Try multiple OCR configurations and pick the best result
-    configs = [
-        "--psm 6 -l eng --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',.-",
-        "--psm 7 -l eng --oem 3",  # Single text line
-        "--psm 6 -l eng --oem 1",  # Alternate OCR engine
-    ]
-    
-    preprocessed_images = [
-        ("grayscale", gray),
-        ("otsu", otsu_thresh),
-        ("adaptive", adaptive_thresh),
-    ]
-    
-    best_text = None
-    best_confidence = 0.0
-    
-    for prep_name, prep_img in preprocessed_images:
-        for config in configs:
-            try:
-                # Get both text and confidence data
-                data = pytesseract.image_to_data(prep_img, config=config, output_type=pytesseract.Output.DICT)
-                text = pytesseract.image_to_string(prep_img, config=config)
-                
-                # Calculate average confidence
-                confidences = []
-                for conf_str in data['confidence']:
+    try:
+        h, w = img.shape[:2]
+        x1 = int(roi_rel[0] * w)
+        y1 = int(roi_rel[1] * h)
+        x2 = int(roi_rel[2] * w)
+        y2 = int(roi_rel[3] * h)
+        roi = img[y1:y2, x1:x2]
+        
+        # Validate ROI
+        if roi.size == 0:
+            return None
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        
+        # Multi-step preprocessing for better OCR accuracy
+        # Step 1: Denoise while preserving edges
+        gray = cv2.bilateralFilter(gray, 9, 75, 75)
+        
+        # Step 2: Enhance contrast using CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+        
+        # Step 3: Apply morphological operations to clean up text
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        gray = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
+        
+        # Step 4: Adaptive thresholding for variable lighting conditions
+        # Use Otsu's method first for reference
+        _, otsu_thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # Also try adaptive threshold
+        adaptive_thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                               cv2.THRESH_BINARY, 11, 2)
+        
+        # Step 5: Upscale for better Tesseract recognition
+        gray = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        otsu_thresh = cv2.resize(otsu_thresh, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        adaptive_thresh = cv2.resize(adaptive_thresh, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        
+        # Try multiple OCR configurations and pick the best result
+        configs = [
+            "--psm 6 -l eng --oem 3",  # Block text (best for card names)
+            "--psm 7 -l eng --oem 3",  # Single text line
+            "--psm 6 -l eng --oem 1",  # Alternate OCR engine
+            "--psm 6 -l eng",  # Fallback: simple PSM 6
+            "--psm 8 -l eng",  # Single word mode (for simple cards)
+        ]
+        
+        preprocessed_images = [
+            ("otsu", otsu_thresh),
+            ("adaptive", adaptive_thresh),
+            ("grayscale", gray),
+        ]
+        
+        best_text = None
+        best_confidence = 0.0
+        
+        for prep_name, prep_img in preprocessed_images:
+            for config in configs:
+                try:
+                    # Get text with Tesseract
+                    text = pytesseract.image_to_string(prep_img, config=config).strip()
+                    
+                    if not text or len(text) < 2:
+                        continue
+                    
+                    # Try to get confidence
                     try:
-                        conf = float(conf_str)
-                        if conf > 0:  # Ignore -1 (no detection)
-                            confidences.append(conf)
+                        data = pytesseract.image_to_data(prep_img, config=config, output_type=pytesseract.Output.DICT)
+                        confidences = []
+                        for conf_str in data.get('confidence', []):
+                            try:
+                                conf = float(conf_str)
+                                if conf > 0:
+                                    confidences.append(conf)
+                            except:
+                                pass
+                        avg_confidence = sum(confidences) / len(confidences) if confidences else 50.0
                     except:
-                        pass
+                        avg_confidence = 50.0  # Default confidence if we can't calculate
+                    
+                    if text and len(text.strip()) >= 2 and avg_confidence > best_confidence:
+                        best_text = text
+                        best_confidence = avg_confidence
                 
-                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-                
-                if text and len(text.strip()) >= 2 and avg_confidence > best_confidence:
-                    best_text = text
-                    best_confidence = avg_confidence
-            except Exception:
-                continue
+                except Exception:
+                    continue
+        
+        if not best_text:
+            return None
+        
+        # Post-process the recognized text
+        name = best_text.strip().replace("\n", " ")
+        # Remove common OCR artifacts
+        name = name.strip("-—_ :'\"")
+        # Clean up extra spaces
+        name = " ".join(name.split())
+        
+        # Additional validation: MTG card names typically have 2+ characters
+        if len(name) < 2:
+            return None
+        
+        # Check for obviously corrupted text (excessive special characters)
+        special_count = sum(1 for c in name if not (c.isalnum() or c.isspace() or c in "'-"))
+        if special_count > len(name) * 0.4:  # More than 40% special chars = likely OCR error
+            return None
+        
+        return name
     
-    if not best_text:
-        return None
-    
-    # Post-process the recognized text
-    name = best_text.strip().replace("\n", " ")
-    # Remove common OCR artifacts
-    name = name.strip("-—_ :'\"")
-    # Clean up extra spaces
-    name = " ".join(name.split())
-    
-    # Additional validation: MTG card names typically have 2+ characters
-    # and don't have excessive repeated characters
-    if len(name) < 2:
-        return None
-    
-    # Check for obviously corrupted text (excessive special characters)
-    special_count = sum(1 for c in name if not (c.isalnum() or c.isspace() or c in "'-"))
-    if special_count > len(name) * 0.3:  # More than 30% special chars = likely OCR error
+    except Exception:
+        # Fallback: return None on any unexpected error
         return None
     
     return name
