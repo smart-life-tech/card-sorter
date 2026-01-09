@@ -229,15 +229,49 @@ class Recognizer:
                 print(f"[RECOGNIZER] Exact match: '{detected_name}' -> '{card_name}'")
                 return card_name
         
-        # Use fuzzy matching
-        matches = get_close_matches(detected_name, self.card_index.keys(), n=1, cutoff=0.6)
-        if matches:
-            matched_name = matches[0]
-            print(f"[RECOGNIZER] Fuzzy match: '{detected_name}' -> '{matched_name}'")
-            return matched_name
+        # Create variations to try
+        variations = [detected_name]
+        
+        # Try removing common prefixes like 'if', 'I', 'a', etc.
+        words = detected_name.split()
+        if len(words) > 1:
+            # Try without first word if it's short
+            if len(words[0]) <= 2:
+                variations.append(' '.join(words[1:]))
+            # Try without last word if it's short
+            if len(words[-1]) <= 2:
+                variations.append(' '.join(words[:-1]))
+            # Try middle part if we have 3+ words
+            if len(words) >= 3:
+                variations.append(' '.join(words[1:-1]))
+        
+        # Try fuzzy matching with each variation, using lower threshold
+        best_match = None
+        best_ratio = 0.0
+        
+        for variant in variations:
+            if not variant or len(variant) < 2:
+                continue
+            matches = get_close_matches(variant, self.card_index.keys(), n=1, cutoff=0.5)
+            if matches:
+                # Calculate similarity ratio
+                match = matches[0]
+                ratio = self._similarity_ratio(variant.lower(), match.lower())
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_match = match
+        
+        if best_match:
+            print(f"[RECOGNIZER] Fuzzy match: '{detected_name}' -> '{best_match}' (score: {best_ratio:.2f})")
+            return best_match
         
         print(f"[RECOGNIZER] No match found for '{detected_name}'")
         return None
+    
+    def _similarity_ratio(self, s1: str, s2: str) -> float:
+        """Calculate similarity ratio between two strings"""
+        from difflib import SequenceMatcher
+        return SequenceMatcher(None, s1, s2).ratio()
 
     def _extract_name_from_image(self, image_path: Path) -> Optional[str]:
         """Extract card name from name ROI using Tesseract OCR"""
@@ -270,7 +304,19 @@ class Recognizer:
             # Normalize whitespace
             name = ' '.join(name.split())
             name = name.strip()
-            print(name)
+            
+            # Remove common OCR artifacts (single letters at start/end)
+            words = name.split()
+            if len(words) > 1:
+                # Remove single-letter words from start
+                while words and len(words[0]) == 1:
+                    words.pop(0)
+                # Remove single-letter words from end
+                while words and len(words[-1]) == 1:
+                    words.pop()
+                name = ' '.join(words)
+            
+            print(f"[OCR] Detected: '{name}'")
             return name if len(name) >= 2 else None
         except Exception as exc:
             print(f"[RECOGNIZER] OCR error: {exc}")
