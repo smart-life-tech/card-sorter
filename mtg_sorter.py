@@ -742,7 +742,7 @@ class SorterGUI:
 
         ttk.Label(frm, textvariable=self.status_var).grid(row=4, column=0, columnspan=4, sticky="we")
 
-        ttk.Label(frm, text=\"\").grid(row=5)  # spacer
+        ttk.Label(frm, text="").grid(row=5)  # spacer
 
         # Bin test buttons
         ttk.Label(frm, text="Test Bins:").grid(row=6, column=0, sticky="w")
