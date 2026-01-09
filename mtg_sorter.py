@@ -99,11 +99,11 @@ def move_servo(pca: Optional[any], name: str, channel: int, pulse_open_us: int, 
         print(f"[MOCK SERVO] {name} (ch {channel}) -> open ({pulse_open_us}µs) then close ({pulse_close_us}µs)")
         time.sleep(dwell_s)
         return
-    # Convert microseconds to 16-bit value (4096 steps per 20ms = 20000µs)
-    # PCA9685 runs at 50 Hz (20ms period), 4096 steps per period
-    # 1µs = 4096 / 20000 ≈ 0.2048 steps
-    open_val = int(pulse_open_us * 4096 / 20000)
-    close_val = int(pulse_close_us * 4096 / 20000)
+    # PCA9685 uses 16-bit duty_cycle (0-65535) for a 20ms period at 50Hz
+    # 1µs = 65535 / 20000 ≈ 3.27675 steps
+    open_val = int(pulse_open_us * 65535 / 20000)
+    close_val = int(pulse_close_us * 65535 / 20000)
+    print(f"[PCA SERVO] {name} (ch {channel}) open={pulse_open_us}µs({open_val}) close={pulse_close_us}µs({close_val})")
     pca.channels[channel].duty_cycle = open_val
     time.sleep(dwell_s)
     pca.channels[channel].duty_cycle = close_val
