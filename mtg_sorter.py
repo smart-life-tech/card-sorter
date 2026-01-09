@@ -305,7 +305,7 @@ class CameraCapture:
             raise RuntimeError("Camera failed to open")
 
     def capture(self) -> Path:
-        filename = datetime.now(datetime.UTC).strftime("capture_%Y%m%d_%H%M%S.jpg")
+        filename = datetime.now(timezone.utc).strftime("capture_%Y%m%d_%H%M%S.jpg")
         path = self.output_dir / filename
 
         if self.mock_mode:
