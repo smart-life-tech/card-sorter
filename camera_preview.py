@@ -207,10 +207,27 @@ class CameraPreview:
                 cv2.putText(frame_rgb, "OCR Region", (x1, max(y1-10, 15)), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
                 
-                # Resize for display (fit to 640x480 preview)
-                display_h, display_w = 480, 640
-                if h != display_h or w != display_w:
-                    frame_rgb = cv2.resize(frame_rgb, (display_w, display_h))
+                # Resize for display (fit to 640x480 preview while maintaining aspect ratio)
+                display_w, display_h = 640, 480
+                aspect_ratio = w / h
+                if aspect_ratio > (display_w / display_h):
+                    # Frame is wider - fit to width
+                    new_w = display_w
+                    new_h = int(display_w / aspect_ratio)
+                else:
+                    # Frame is taller - fit to height
+                    new_h = display_h
+                    new_w = int(display_h * aspect_ratio)
+                
+                if w != new_w or h != new_h:
+                    frame_rgb = cv2.resize(frame_rgb, (new_w, new_h))
+                
+                # Create canvas with padding to maintain 640x480 display size
+                canvas = np.zeros((display_h, display_w, 3), dtype=np.uint8)
+                y_offset = (display_h - new_h) // 2
+                x_offset = (display_w - new_w) // 2
+                canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = frame_rgb
+                frame_rgb = canvas
                 
                 # Convert to PhotoImage
                 img = Image.fromarray(frame_rgb)
