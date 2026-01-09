@@ -4,6 +4,7 @@ import time
 import csv
 import math
 import platform
+import numpy as np
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List
@@ -280,7 +281,7 @@ class SorterGUI:
 
         # Test buttons
         r = 4
-        for name in ["price_bin","combined_bin","white_blue_bin","black_bin","red_bin","green_bin"]:
+        for name in ["hopper","price_bin","combined_bin","white_blue_bin","black_bin","red_bin","green_bin","extra_bin"]:
             ttk.Button(frm, text=f"Test {name}", command=lambda n=name: self.test_bin(n)).grid(row=r, column=0, columnspan=2, sticky="we")
             r += 1
 
@@ -346,7 +347,9 @@ class SorterGUI:
                 self._schedule_tick()
                 return
             bin_name = decide_bin(info, self.mode_var.get(), float(self.threshold_var.get()))
-            move_servo(self.pwm_map, bin_name, self.servo_cfg.open_dc, self.servo_cfg.close_dc, mock=self.cfg.mock_mode)
+            ch = self.channel_map.get(bin_name, -1)
+            if ch >= 0:
+                move_servo(self.pca, bin_name, ch, self.servo_cfg.pulse_open_us, self.servo_cfg.pulse_close_us, mock=self.cfg.mock_mode)
             self.status_var.set(f"{info.name} → {bin_name} (${info.price_usd if info.price_usd is not None else 'N/A'})")
         except Exception as e:
             self.status_var.set(f"Error: {e}")
