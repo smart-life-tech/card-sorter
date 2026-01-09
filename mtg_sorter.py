@@ -5,6 +5,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from difflib import get_close_matches
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -88,6 +89,7 @@ class AppConfig:
     camera_resolution: Tuple[int, int] = (640, 480)
     camera_device_index: int = 0
     name_roi: Tuple[float, float, float, float] = (0.08, 0.08, 0.92, 0.22)  # x1,y1,x2,y2 relative
+    card_index_path: Path = Path("./models/card_index.json")
 
 
 @dataclass
@@ -186,6 +188,56 @@ class Recognizer:
     def __init__(self, cfg: AppConfig, mock_mode: bool = False) -> None:
         self.cfg = cfg
         self.mock_mode = mock_mode
+        self.card_index = self._load_card_index()
+    
+    def _load_card_index(self) -> Dict[str, CardMetadata]:
+        """Load card index from JSON file"""
+        if not self.cfg.card_index_path.exists():
+            print(f"[RECOGNIZER] Card index not found at {self.cfg.card_index_path}")
+            return {}
+        
+        try:
+            with open(self.cfg.card_index_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            card_index = {}
+            for key, card_data in data.items():
+                name = card_data.get('name', '')
+                if name and name not in card_index:
+                    card_index[name] = CardMetadata(
+                        name=name,
+                        set_code=card_data.get('set', ''),
+                        collector_number=card_data.get('collector_number', ''),
+                        art_id=key,
+                        colors=card_data.get('colors', []),
+                        color_identity=card_data.get('color_identity', []),
+                    )
+            print(f"[RECOGNIZER] Loaded {len(card_index)} unique card names from index")
+            return card_index
+        except Exception as exc:
+            print(f"[RECOGNIZER] Failed to load card index: {exc}")
+            return {}
+    
+    def _find_best_match(self, detected_name: str) -> Optional[str]:
+        """Find the best matching card name from the local index using fuzzy matching"""
+        if not self.card_index:
+            return None
+        
+        # Try exact match first (case-insensitive)
+        for card_name in self.card_index.keys():
+            if card_name.lower() == detected_name.lower():
+                print(f"[RECOGNIZER] Exact match: '{detected_name}' -> '{card_name}'")
+                return card_name
+        
+        # Use fuzzy matching
+        matches = get_close_matches(detected_name, self.card_index.keys(), n=1, cutoff=0.6)
+        if matches:
+            matched_name = matches[0]
+            print(f"[RECOGNIZER] Fuzzy match: '{detected_name}' -> '{matched_name}'")
+            return matched_name
+        
+        print(f"[RECOGNIZER] No match found for '{detected_name}'")
+        return None
 
     def _extract_name_from_image(self, image_path: Path) -> Optional[str]:
         """Extract card name from name ROI using Tesseract OCR"""
@@ -248,9 +300,9 @@ class Recognizer:
             return None
 
     def recognize(self, image_path: Path) -> CardRecognitionResult:
-        """Recognize card using OCR + online lookup"""
-        name = self._extract_name_from_image(image_path)
-        if not name:
+        """Recognize card using OCR + fuzzy matching + online lookup"""
+        detected_name = self._extract_name_from_image(image_path)
+        if not detected_name:
             return CardRecognitionResult(
                 name=None,
                 set_code=None,
@@ -260,7 +312,27 @@ class Recognizer:
                 image_path=str(image_path),
             )
         
-        meta = self._lookup_card(name)
+        # Try to find best match in local index first
+        matched_name = self._find_best_match(detected_name)
+        
+        # If we found a match in the local index, use it directly
+        if matched_name and matched_name in self.card_index:
+            meta = self.card_index[matched_name]
+            print(f"[RECOGNIZER] Using local index match: {matched_name}")
+            return CardRecognitionResult(
+                name=meta.name,
+                set_code=meta.set_code,
+                collector_number=meta.collector_number,
+                art_id=meta.art_id,
+                confidence=0.9,  # High confidence for local match
+                colors=meta.colors,
+                color_identity=meta.color_identity,
+                image_path=str(image_path),
+            )
+        
+        # Fall back to Scryfall lookup with the best matched name (or original if no match)
+        lookup_name = matched_name if matched_name else detected_name
+        meta = self._lookup_card(lookup_name)
         if not meta:
             return CardRecognitionResult(
                 name=None,
