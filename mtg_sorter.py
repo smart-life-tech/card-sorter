@@ -48,7 +48,7 @@ class ServoConfig:
     combined_bin: int = 1
     white_blue_bin: int = 2
     black_bin: int = 3
-    red_bin: int = 4
+    red_bin: int = 15
     green_bin: int = 5
     reserve: List[int] = field(default_factory=lambda: [6, 7])
     open_deg: Dict[str, float] = field(
@@ -167,6 +167,7 @@ def move_servo(pca: Optional["PCA9685"], channel: int, angle_deg: float, cfg: Se
         return
     try:
         pca.channels[channel].duty_cycle = duty
+        print(f"[SERVO] Moved channel {channel} to angle {angle_deg:.1f} (duty {duty})")
     except Exception as exc:
         print(f"[SERVO] Failed channel {channel}: {exc}")
 
@@ -798,6 +799,7 @@ class CardSorterApp:
 
         self.state["last_bin"] = decision.bin_name
         save_state(self.cfg.persistence_file, {"disabled_bins": list(self.disabled_bins), "last_bin": decision.bin_name})
+        print(decision)
         return decision
 
     def start_loop(self, on_update):
