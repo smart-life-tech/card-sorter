@@ -85,7 +85,7 @@ class AppConfig:
     price_cache_ttl_hours: int = 24
     logging_dir: Path = Path("./logs")
     persistence_file: Path = Path("./config/state.json")
-    camera_resolution: Tuple[int, int] = (1920, 1080)
+    camera_resolution: Tuple[int, int] = (640, 480)
     camera_device_index: int = 0
     name_roi: Tuple[float, float, float, float] = (0.08, 0.08, 0.92, 0.22)  # x1,y1,x2,y2 relative
 
@@ -299,8 +299,13 @@ class CameraCapture:
             raise RuntimeError("OpenCV not installed")
         if self._cap is None:
             self._cap = cv2.VideoCapture(self.device_index)
+            # Set buffersize to 1 to avoid stale frames
+            self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # Set resolution
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
             self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
+            # Small delay for camera to stabilize
+            time.sleep(0.5)
         if not self._cap.isOpened():
             raise RuntimeError("Camera failed to open")
 
