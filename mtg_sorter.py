@@ -4,7 +4,7 @@ import math
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -358,7 +358,7 @@ class ScryfallProvider(PriceProvider):
             data = resp.json()
         price = data.get("prices", {}).get("usd")
         price_val = float(price) if price else None
-        return PriceQuote(price_usd=price_val, source=self.name, fetched_at=datetime.now(datetime.UTC))
+        return PriceQuote(price_usd=price_val, source=self.name, fetched_at=datetime.now(timezone.utc))
 
 
 class TcgplayerProvider(PriceProvider):
@@ -443,12 +443,12 @@ class TcgplayerProvider(PriceProvider):
     def fetch(self, name: str, set_code: Optional[str], collector_number: Optional[str]) -> PriceQuote:
         token = self._ensure_token()
         if not token:
-            return PriceQuote(price_usd=None, source=self.name, fetched_at=datetime.now(datetime.UTC))
+            return PriceQuote(price_usd=None, source=self.name, fetched_at=datetime.now(timezone.utc))
         product_id = self._find_product_id(name, set_code, collector_number, token)
         if not product_id:
-            return PriceQuote(price_usd=None, source=self.name, fetched_at=datetime.now(datetime.UTC))
+            return PriceQuote(price_usd=None, source=self.name, fetched_at=datetime.now(timezone.utc))
         price = self._fetch_market(product_id, token)
-        return PriceQuote(price_usd=price, source=self.name, fetched_at=datetime.now(datetime.UTC))
+        return PriceQuote(price_usd=price, source=self.name, fetched_at=datetime.now(timezone.utc))
 
 
 class PriceService:
@@ -487,7 +487,7 @@ class PriceService:
         try:
             return provider.fetch(name, set_code, collector_number)
         except Exception:
-            return PriceQuote(price_usd=None, source=provider.name, fetched_at=datetime.now(datetime.UTC))
+            return PriceQuote(price_usd=None, source=provider.name, fetched_at=datetime.now(timezone.utc))
 
 
 ###############################################################################
@@ -561,7 +561,7 @@ class CsvLogger:
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
     def append(self, row: Dict[str, object]) -> None:
-        date_str = datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         path = self.log_dir / f"cards_{date_str}.csv"
         is_new = not path.exists()
         with path.open("a", newline="", encoding="utf-8") as f:
@@ -649,7 +649,7 @@ class CardSorterApp:
 
         self.logger.append(
             {
-                "timestamp": datetime.now(datetime.UTC).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "name": rec.name,
                 "set_code": rec.set_code,
                 "collector_number": rec.collector_number,
