@@ -213,7 +213,12 @@ class Recognizer:
                 return None
             
             name = text.strip().replace("\n", " ")
-            name = name.strip("-—_ :")
+            # Keep only alphabets and spaces
+            name = ''.join(c for c in name if c.isalpha() or c.isspace())
+            # Normalize whitespace
+            name = ' '.join(name.split())
+            name = name.strip()
+            print(name)
             return name if len(name) >= 2 else None
         except Exception as exc:
             print(f"[RECOGNIZER] OCR error: {exc}")
