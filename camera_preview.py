@@ -194,19 +194,6 @@ class CameraPreview:
                 # Convert frame for display
                 frame_rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
                 
-                # Draw ROI rectangle on the displayed frame
-                x1 = int(w * self.roi[0])
-                y1 = int(h * self.roi[1])
-                x2 = int(w * self.roi[2])
-                y2 = int(h * self.roi[3])
-                
-                # Draw red rectangle for ROI
-                cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                
-                # Add text label
-                cv2.putText(frame_rgb, "OCR Region", (x1, max(y1-10, 15)), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-                
                 # Resize for display (fit to 640x480 preview while maintaining aspect ratio)
                 display_w, display_h = 640, 480
                 aspect_ratio = w / h
@@ -219,8 +206,13 @@ class CameraPreview:
                     new_h = display_h
                     new_w = int(display_h * aspect_ratio)
                 
+                # Calculate scale factor
+                scale_x = new_w / w
+                scale_y = new_h / h
+                
+                # Resize frame
                 if w != new_w or h != new_h:
-                    frame_rgb = cv2.resize(frame_rgb, (new_w, new_h))
+                    frame_rgb = cv2.resize(frame_rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
                 
                 # Create canvas with padding to maintain 640x480 display size
                 canvas = np.zeros((display_h, display_w, 3), dtype=np.uint8)
@@ -228,6 +220,19 @@ class CameraPreview:
                 x_offset = (display_w - new_w) // 2
                 canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = frame_rgb
                 frame_rgb = canvas
+                
+                # Now draw ROI rectangle on the resized/centered frame
+                x1 = int(w * self.roi[0] * scale_x) + x_offset
+                y1 = int(h * self.roi[1] * scale_y) + y_offset
+                x2 = int(w * self.roi[2] * scale_x) + x_offset
+                y2 = int(h * self.roi[3] * scale_y) + y_offset
+                
+                # Draw red rectangle for ROI
+                cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                
+                # Add text label
+                cv2.putText(frame_rgb, "OCR Region", (x1, max(y1-10, 15)), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
                 
                 # Convert to PhotoImage
                 img = Image.fromarray(frame_rgb)
