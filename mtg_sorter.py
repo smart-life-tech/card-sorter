@@ -317,12 +317,17 @@ class CameraCapture:
             return path
 
         self._ensure_camera()
-        ret, frame = self._cap.read()
-        if not ret:
-            raise RuntimeError("Camera read failed")
-        if not cv2.imwrite(str(path), frame):
-            raise RuntimeError("Failed to write capture")
-        return path
+        # Retry up to 3 times for V4L2 timeout issues
+        for attempt in range(3):
+            ret, frame = self._cap.read()
+            if ret:
+                if not cv2.imwrite(str(path), frame):
+                    raise RuntimeError("Failed to write capture")
+                return path
+            if attempt < 2:
+                print(f"[CAMERA] Read attempt {attempt + 1} failed, retrying...")
+                time.sleep(0.2)
+        raise RuntimeError("Camera read failed after 3 attempts")
 
     def release(self) -> None:
         if self._cap is not None:
@@ -463,7 +468,7 @@ class PriceService:
 
     def get_price(self, name: str, set_code: Optional[str], collector_number: Optional[str]) -> PriceQuote:
         key = self._key(name, set_code, collector_number)
-        now = datetime.now(datetime.UTC)
+        now = datetime.now(timezone.utc)
         cached = self.cache.get(key)
         if cached and cached["expires_at"] > now:
             return PriceQuote(price_usd=cached["price"], source=cached["source"], fetched_at=cached["fetched_at"])
