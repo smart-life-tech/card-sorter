@@ -234,18 +234,23 @@ class Recognizer:
     def _load_session(self):
         if self.mock_mode:
             return None
-        if ort and self.model_path.exists():
-            try:
-                return ort.InferenceSession(str(self.model_path))
-            except Exception as exc:
-                print(f"[RECOGNIZER] Failed to load model: {exc}")
-        else:
-            print("[RECOGNIZER] onnxruntime missing or model path invalid; mock recognition active")
-        return None
+        if not ort:
+            print("[RECOGNIZER] onnxruntime not installed; mock recognition active")
+            return None
+        if not self.model_path.exists():
+            print(f"[RECOGNIZER] Model not found at {self.model_path.resolve()}; mock recognition active")
+            return None
+        try:
+            session = ort.InferenceSession(str(self.model_path))
+            print(f"[RECOGNIZER] Model loaded from {self.model_path.resolve()}")
+            return session
+        except Exception as exc:
+            print(f"[RECOGNIZER] Failed to load model: {exc}")
+            return None
 
     def _load_label_map(self) -> List[str]:
         if not self.label_map_path.exists():
-            print(f"[RECOGNIZER] Label map missing at {self.label_map_path}")
+            print(f"[RECOGNIZER] Label map missing at {self.label_map_path.resolve()}")
             return []
         data = json.loads(self.label_map_path.read_text(encoding="utf-8"))
         if isinstance(data, list):
@@ -260,7 +265,7 @@ class Recognizer:
 
     def _load_index(self) -> Optional[CardIndex]:
         if not self.card_index_path.exists():
-            print(f"[RECOGNIZER] Card index missing at {self.card_index_path}")
+            print(f"[RECOGNIZER] Card index missing at {self.card_index_path.resolve()}")
             return None
         return CardIndex.load(self.card_index_path)
 
