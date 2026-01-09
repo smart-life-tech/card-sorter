@@ -775,8 +775,6 @@ class SorterGUI:
         self.card_info_text = tk.Text(info_frame, height=8, width=30, font=("Courier", 9), bg="white", fg="black")
         self.card_info_text.pack(fill=tk.BOTH, expand=True)
         self.card_info_text.config(state=tk.DISABLED)
-        
-        self._start_preview()
 
     def _test_bin(self, name: str):
         try:
