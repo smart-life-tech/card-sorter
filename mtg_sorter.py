@@ -290,6 +290,10 @@ class SorterGUI:
         ttk.Button(frm, text="All OFF (close)", command=self.all_off).grid(row=r, column=1, columnspan=1, sticky="we")
         r += 1
 
+        # Full 16-channel sweep test
+        ttk.Button(frm, text="Test All 16 Ch", command=self.test_all_channels).grid(row=r, column=0, columnspan=2, sticky="we")
+        r += 1
+
         ttk.Label(frm, textvariable=self.status_var).grid(row=r, column=0, columnspan=3, sticky="we")
 
     def _on_toggle_mock(self):
@@ -313,6 +317,11 @@ class SorterGUI:
         for name, ch in self.channel_map.items():
             if ch >= 0:
                 move_servo(self.pca, name, ch, self.servo_cfg.pulse_close_us, self.servo_cfg.pulse_close_us, dwell_s=0.1, mock=self.cfg.mock_mode)
+
+    def test_all_channels(self):
+        # Cycle through all 16 PCA9685 channels regardless of mapping
+        for ch in range(16):
+            move_servo(self.pca, f"ch{ch}", ch, self.servo_cfg.pulse_open_us, self.servo_cfg.pulse_close_us, dwell_s=0.25, mock=self.cfg.mock_mode)
 
     def start(self):
         # Open camera
