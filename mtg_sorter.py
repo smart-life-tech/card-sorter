@@ -285,6 +285,11 @@ class SorterGUI:
             ttk.Button(frm, text=f"Test {name}", command=lambda n=name: self.test_bin(n)).grid(row=r, column=0, columnspan=2, sticky="we")
             r += 1
 
+        # All-on / all-off controls
+        ttk.Button(frm, text="All ON (open)", command=self.all_on).grid(row=r, column=0, columnspan=1, sticky="we")
+        ttk.Button(frm, text="All OFF (close)", command=self.all_off).grid(row=r, column=1, columnspan=1, sticky="we")
+        r += 1
+
         ttk.Label(frm, textvariable=self.status_var).grid(row=r, column=0, columnspan=3, sticky="we")
 
     def _on_toggle_mock(self):
@@ -298,6 +303,16 @@ class SorterGUI:
         ch = self.channel_map.get(name, -1)
         if ch >= 0:
             move_servo(self.pca, name, ch, self.servo_cfg.pulse_open_us, self.servo_cfg.pulse_close_us, mock=self.cfg.mock_mode)
+
+    def all_on(self):
+        for name, ch in self.channel_map.items():
+            if ch >= 0:
+                move_servo(self.pca, name, ch, self.servo_cfg.pulse_open_us, self.servo_cfg.pulse_close_us, dwell_s=0.3, mock=self.cfg.mock_mode)
+
+    def all_off(self):
+        for name, ch in self.channel_map.items():
+            if ch >= 0:
+                move_servo(self.pca, name, ch, self.servo_cfg.pulse_close_us, self.servo_cfg.pulse_close_us, dwell_s=0.1, mock=self.cfg.mock_mode)
 
     def start(self):
         # Open camera
