@@ -704,26 +704,26 @@ class SorterGUI:
     def __init__(self, app: CardSorterApp):
         self.app = app
         self.root = tk.Tk()
-        self.root.title("MTG Card Sorter (Offline)")
+        self.root.title("MTG Card Sorter (Online OCR)")
+        self.root.geometry("800x600")
 
         self.mode_var = tk.StringVar(value=self.app.cfg.mode)
         self.threshold_var = tk.DoubleVar(value=self.app.cfg.price_threshold_usd)
         self.status_var = tk.StringVar(value="Idle")
         self.mock_var = tk.BooleanVar(value=self.app.cfg.mock_mode)
-        
-        self.preview_label = None
-        self.preview_job = None
+        self.ocr_text_var = tk.StringVar(value="")
+        self.card_info_var = tk.StringVar(value="")
 
         self._build()
 
     def _build(self):
-        # Main container with two columns: controls on left, preview on right
+        # Main container with two columns: controls on left, text display on right
         container = ttk.Frame(self.root)
         container.grid(row=0, column=0, sticky="nsew")
         
         # Left side: controls
         frm = ttk.Frame(container, padding=8)
-        frm.grid(row=0, column=0, sticky="nsew")
+        frm.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
         ttk.Label(frm, text="Mode:").grid(row=0, column=0, sticky="w")
         ttk.Radiobutton(frm, text="Price", variable=self.mode_var, value="price", command=self._on_mode).grid(row=0, column=1, sticky="w")
@@ -736,28 +736,45 @@ class SorterGUI:
 
         ttk.Checkbutton(frm, text="Mock Mode", variable=self.mock_var, state="disabled").grid(row=2, column=0, sticky="w")
 
-        ttk.Button(frm, text="Start", command=self.start).grid(row=3, column=0, sticky="we")
-        ttk.Button(frm, text="Stop", command=self.stop).grid(row=3, column=1, sticky="we")
+        ttk.Button(frm, text="Capture & OCR", command=self._capture_ocr).grid(row=3, column=0, sticky="we")
+        ttk.Button(frm, text="Start Loop", command=self.start).grid(row=3, column=1, sticky="we")
+        ttk.Button(frm, text="Stop", command=self.stop).grid(row=3, column=2, sticky="we")
 
         ttk.Label(frm, textvariable=self.status_var).grid(row=4, column=0, columnspan=4, sticky="we")
 
+        ttk.Label(frm, text=\"\").grid(row=5)  # spacer
+
         # Bin test buttons
-        r = 5
+        ttk.Label(frm, text="Test Bins:").grid(row=6, column=0, sticky="w")
+        r = 7
         for name in ["price_bin", "combined_bin", "white_blue_bin", "black_bin", "red_bin", "green_bin"]:
             ttk.Button(frm, text=f"Test {name}", command=lambda n=name: self._test_bin(n)).grid(row=r, column=0, columnspan=2, sticky="we")
             r += 1
         
         # Test all 16 channels button
-        ttk.Button(frm, text="Test All 16 Channels", command=self._test_all_channels).grid(row=r, column=0, columnspan=2, sticky="we")
-        r += 1
+        ttk.Button(frm, text="Test All 16 Channels", command=self._test_all_channels).grid(row=r, column=0, columnspan=3, sticky="we")
         
-        # Right side: camera preview
-        preview_frame = ttk.Frame(container, padding=8)
-        preview_frame.grid(row=0, column=1, sticky="nsew")
+        # Right side: OCR text display
+        right_frame = ttk.Frame(container, padding=8)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
         
-        ttk.Label(preview_frame, text="Camera Preview").pack()
-        self.preview_label = tk.Label(preview_frame, bg="black")
-        self.preview_label.pack()
+        ttk.Label(right_frame, text="Extracted Text (OCR)", font=("Arial", 12, "bold")).pack(fill=tk.X)
+        
+        # OCR text display box
+        ocr_frame = ttk.LabelFrame(right_frame, text="Card Name", padding=5)
+        ocr_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        self.ocr_text_label = tk.Label(ocr_frame, textvariable=self.ocr_text_var, bg="white", fg="black", 
+                                        font=("Courier", 14, "bold"), wraplength=250, justify=tk.CENTER, padx=10, pady=10)
+        self.ocr_text_label.pack(fill=tk.BOTH, expand=True)
+        
+        # Card info display
+        info_frame = ttk.LabelFrame(right_frame, text="Card Info (from Scryfall)", padding=5)
+        info_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        self.card_info_text = tk.Text(info_frame, height=8, width=30, font=("Courier", 9), bg="white", fg="black")
+        self.card_info_text.pack(fill=tk.BOTH, expand=True)
+        self.card_info_text.config(state=tk.DISABLED)
         
         self._start_preview()
 
@@ -805,31 +822,49 @@ class SorterGUI:
         else:
             self.status_var.set(str(msg))
     
-    def _start_preview(self):
-        """Start camera preview updates"""
-        if not self.app.cfg.mock_mode and cv2:
-            self._update_preview()
-    
-    def _update_preview(self):
-        """Update camera preview frame"""
+    def _capture_ocr(self):
+        """Capture a frame and perform OCR"""
         try:
-            if self.app.camera._cap is None:
-                self.app.camera._ensure_camera()
+            self.status_var.set("Capturing...")
+            self.root.update()
             
-            ret, frame = self.app.camera._cap.read()
-            if ret:
-                # Resize for display
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = cv2.resize(frame, (320, 240))
-                img = Image.fromarray(frame)
-                imgtk = ImageTk.PhotoImage(image=img)
-                self.preview_label.configure(image=imgtk)
-                self.preview_label.image = imgtk
+            # Capture image
+            image_path = self.app.camera.capture()
+            self.status_var.set(f"OCR processing...")
+            self.root.update()
+            
+            # Extract text using OCR
+            name = self.app.recognizer._extract_name_from_image(image_path)
+            
+            if name:
+                self.ocr_text_var.set(name)
+                self.status_var.set(f"OCR: '{name}'")
+                
+                # Try to look up the card
+                meta = self.app.recognizer._lookup_card(name)
+                if meta:
+                    info_text = f"Name: {meta.name}\nSet: {meta.set_code}\nCollector #: {meta.collector_number}\nArt ID: {meta.art_id}\nColors: {', '.join(meta.colors) or 'Colorless'}\nColor ID: {', '.join(meta.color_identity) or 'Colorless'}"
+                    self.card_info_text.config(state=tk.NORMAL)
+                    self.card_info_text.delete(1.0, tk.END)
+                    self.card_info_text.insert(1.0, info_text)
+                    self.card_info_text.config(state=tk.DISABLED)
+                    self.status_var.set(f"Found: {meta.name}")
+                else:
+                    self.card_info_text.config(state=tk.NORMAL)
+                    self.card_info_text.delete(1.0, tk.END)
+                    self.card_info_text.insert(1.0, "[Scryfall lookup failed]")
+                    self.card_info_text.config(state=tk.DISABLED)
+                    self.status_var.set(f"OCR found text but Scryfall lookup failed: {name}")
+            else:
+                self.ocr_text_var.set("[No text detected]")
+                self.card_info_text.config(state=tk.NORMAL)
+                self.card_info_text.delete(1.0, tk.END)
+                self.card_info_text.insert(1.0, "[OCR failed to extract text]")
+                self.card_info_text.config(state=tk.DISABLED)
+                self.status_var.set("OCR failed")
         except Exception as exc:
-            print(f"Preview error: {exc}")
-        
-        # Schedule next update
-        self.preview_job = self.root.after(33, self._update_preview)  # ~30 FPS
+            self.status_var.set(f"Error: {exc}")
+            self.ocr_text_var.set(f"Error: {exc}")
 
     def run(self):
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -837,8 +872,6 @@ class SorterGUI:
 
     def _on_close(self):
         try:
-            if self.preview_job:
-                self.root.after_cancel(self.preview_job)
             self.stop()
             self.app.shutdown()
         finally:
