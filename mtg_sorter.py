@@ -51,8 +51,8 @@ class ServoConfig:
     extra_bin: int = 7  # optional 7th bin if wired
     # Servo pulse range (in microseconds): 500-2500 typical
     # These convert to 16-bit values for PCA9685
-    pulse_open_us: int = 2000    # ~90 degrees
-    pulse_close_us: int = 1000   # ~0 degrees
+    pulse_open_us: int = 2400    # Wider open pulse (increase angle)
+    pulse_close_us: int = 600    # Wider close pulse (decrease angle)
     pca_address: int = 0x40      # Default PCA9685 I2C address
 
 @dataclass
@@ -99,6 +99,9 @@ def move_servo(pca: Optional[any], name: str, channel: int, pulse_open_us: int, 
         print(f"[MOCK SERVO] {name} (ch {channel}) -> open ({pulse_open_us}µs) then close ({pulse_close_us}µs)")
         time.sleep(dwell_s)
         return
+    # Clamp to safe servo range 500–2500 µs
+    pulse_open_us = max(500, min(2500, pulse_open_us))
+    pulse_close_us = max(500, min(2500, pulse_close_us))
     # PCA9685 uses 16-bit duty_cycle (0-65535) for a 20ms period at 50Hz
     # 1µs = 65535 / 20000 ≈ 3.27675 steps
     open_val = int(pulse_open_us * 65535 / 20000)
