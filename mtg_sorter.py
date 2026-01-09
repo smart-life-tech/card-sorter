@@ -17,9 +17,9 @@ except Exception:  # pragma: no cover - optional
     cv2 = None
 
 try:  # pragma: no cover - optional
-    import onnxruntime as ort
+    import pytesseract
 except Exception:  # pragma: no cover - optional
-    ort = None
+    pytesseract = None
 
 try:  # pragma: no cover - optional
     import board
@@ -85,11 +85,9 @@ class AppConfig:
     price_cache_ttl_hours: int = 24
     logging_dir: Path = Path("./logs")
     persistence_file: Path = Path("./config/state.json")
-    recognition_model_path: Path = Path("./models/card_recognizer.onnx")
-    recognition_label_map: Path = Path("./models/label_map.json")
-    recognition_card_index: Path = Path("./models/card_index.json")
     camera_resolution: Tuple[int, int] = (1920, 1080)
     camera_device_index: int = 0
+    name_roi: Tuple[float, float, float, float] = (0.08, 0.08, 0.92, 0.22)  # x1,y1,x2,y2 relative
 
 
 @dataclass
@@ -180,119 +178,74 @@ def cleanup_pca9685(pca: Optional["PCA9685"]) -> None:
 
 
 ###############################################################################
-# Recognition (ONNX)
+# Recognition (Tesseract OCR + Scryfall online lookup)
 ###############################################################################
 
 
-class CardIndex:
-    def __init__(self, records: Dict[str, CardMetadata]):
-        self.records = records
-
-    @classmethod
-    def load(cls, path: Path) -> "CardIndex":
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        records: Dict[str, CardMetadata] = {}
-
-        def coerce_row(art_id: str, row: Dict[str, object]) -> None:
-            meta = CardMetadata(
-                name=str(row.get("name")),
-                set_code=str(row.get("set_code") or row.get("set")),
-                collector_number=str(row.get("collector_number")),
-                art_id=art_id,
-                colors=list(row.get("colors", [])),
-                color_identity=list(row.get("color_identity", row.get("colors", []))),
-            )
-            records[meta.art_id] = meta
-
-        if isinstance(raw, list):
-            for row in raw:
-                art_id = row.get("art_id") or row.get("id")
-                if art_id:
-                    coerce_row(art_id, row)
-        elif isinstance(raw, dict):
-            for art_id, row in raw.items():
-                if isinstance(row, dict):
-                    coerce_row(art_id, row)
-
-        return cls(records)
-
-    def get(self, art_id: str) -> Optional[CardMetadata]:
-        return self.records.get(art_id)
-
-
 class Recognizer:
-    def __init__(self, model_path: Path, label_map_path: Path, card_index_path: Path, mock_mode: bool = False) -> None:
-        self.model_path = model_path
-        self.label_map_path = label_map_path
-        self.card_index_path = card_index_path
+    def __init__(self, cfg: AppConfig, mock_mode: bool = False) -> None:
+        self.cfg = cfg
         self.mock_mode = mock_mode
 
-        self.session = self._load_session()
-        self.label_map = self._load_label_map()
-        self.card_index = self._load_index()
-
-    def _load_session(self):
-        if self.mock_mode:
+    def _extract_name_from_image(self, image_path: Path) -> Optional[str]:
+        """Extract card name from name ROI using Tesseract OCR"""
+        if pytesseract is None or cv2 is None:
+            print("[RECOGNIZER] pytesseract or cv2 not available")
             return None
-        if not ort:
-            print("[RECOGNIZER] onnxruntime not installed; mock recognition active")
-            return None
-        if not self.model_path.exists():
-            print(f"[RECOGNIZER] Model not found at {self.model_path.resolve()}; mock recognition active")
-            return None
+        
         try:
-            session = ort.InferenceSession(str(self.model_path))
-            print(f"[RECOGNIZER] Model loaded from {self.model_path.resolve()}")
-            return session
+            img = cv2.imread(str(image_path))
+            if img is None:
+                return None
+            
+            h, w = img.shape[:2]
+            x1 = int(self.cfg.name_roi[0] * w)
+            y1 = int(self.cfg.name_roi[1] * h)
+            x2 = int(self.cfg.name_roi[2] * w)
+            y2 = int(self.cfg.name_roi[3] * h)
+            roi = img[y1:y2, x1:x2]
+            
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            text = pytesseract.image_to_string(gray, config="--psm 7 -l eng")
+            
+            if not text:
+                return None
+            
+            name = text.strip().replace("\n", " ")
+            name = name.strip("-—_ :")
+            return name if len(name) >= 2 else None
         except Exception as exc:
-            print(f"[RECOGNIZER] Failed to load model: {exc}")
+            print(f"[RECOGNIZER] OCR error: {exc}")
             return None
 
-    def _load_label_map(self) -> List[str]:
-        if not self.label_map_path.exists():
-            print(f"[RECOGNIZER] Label map missing at {self.label_map_path.resolve()}")
-            return []
-        data = json.loads(self.label_map_path.read_text(encoding="utf-8"))
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            try:
-                ordered = sorted(data.items(), key=lambda kv: int(kv[0]))
-                return [v for _, v in ordered]
-            except Exception:
-                return list(data.values())
-        return []
-
-    def _load_index(self) -> Optional[CardIndex]:
-        if not self.card_index_path.exists():
-            print(f"[RECOGNIZER] Card index missing at {self.card_index_path.resolve()}")
+    def _lookup_card(self, name: str) -> Optional[CardMetadata]:
+        """Look up card metadata from Scryfall API"""
+        try:
+            resp = requests.get(
+                "https://api.scryfall.com/cards/named",
+                params={"exact": name},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            return CardMetadata(
+                name=data.get("name", name),
+                set_code=data.get("set", ""),
+                collector_number=data.get("collector_number", ""),
+                art_id=data.get("illustration_id", ""),
+                colors=data.get("colors", []),
+                color_identity=data.get("color_identity", []),
+            )
+        except Exception as exc:
+            print(f"[RECOGNIZER] Scryfall lookup error: {exc}")
             return None
-        return CardIndex.load(self.card_index_path)
-
-    def _preprocess(self, image_path: Path) -> np.ndarray:
-        if cv2 is None:
-            raise RuntimeError("OpenCV is required for preprocessing")
-        img = cv2.imread(str(image_path))
-        if img is None:
-            raise RuntimeError("Failed to read captured image")
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = cv2.resize(img, (224, 224))
-        img = img.astype(np.float32) / 255.0
-        img = np.transpose(img, (2, 0, 1))  # CHW
-        return np.expand_dims(img, axis=0)
-
-    def _softmax(self, logits: np.ndarray) -> np.ndarray:
-        m = np.max(logits)
-        exps = np.exp(logits - m)
-        return exps / np.sum(exps)
-
-    def _art_id_from_idx(self, idx: int) -> Optional[str]:
-        if 0 <= idx < len(self.label_map):
-            return self.label_map[idx]
-        return None
 
     def recognize(self, image_path: Path) -> CardRecognitionResult:
-        if self.session is None or cv2 is None:
+        """Recognize card using OCR + online lookup"""
+        name = self._extract_name_from_image(image_path)
+        if not name:
             return CardRecognitionResult(
                 name=None,
                 set_code=None,
@@ -301,48 +254,28 @@ class Recognizer:
                 confidence=0.0,
                 image_path=str(image_path),
             )
-
-        try:
-            input_tensor = self._preprocess(image_path)
-            input_name = self.session.get_inputs()[0].name
-            outputs = self.session.run(None, {input_name: input_tensor})
-            logits = outputs[0][0]
-            probs = self._softmax(logits)
-            top_idx = int(np.argmax(probs))
-            confidence = float(probs[top_idx])
-            art_id = self._art_id_from_idx(top_idx)
-            meta = self.card_index.get(art_id) if (art_id and self.card_index) else None
-            if meta:
-                return CardRecognitionResult(
-                    name=meta.name,
-                    set_code=meta.set_code,
-                    collector_number=meta.collector_number,
-                    art_id=meta.art_id,
-                    confidence=confidence,
-                    colors=meta.colors,
-                    color_identity=meta.color_identity,
-                    image_path=str(image_path),
-                )
-            return CardRecognitionResult(
-                name=None,
-                set_code=None,
-                collector_number=None,
-                art_id=art_id,
-                confidence=confidence,
-                colors=None,
-                color_identity=None,
-                image_path=str(image_path),
-            )
-        except Exception as exc:
-            print(f"[RECOGNIZER] Error: {exc}")
+        
+        meta = self._lookup_card(name)
+        if not meta:
             return CardRecognitionResult(
                 name=None,
                 set_code=None,
                 collector_number=None,
                 art_id=None,
-                confidence=0.0,
+                confidence=0.5,  # OCR worked but lookup failed
                 image_path=str(image_path),
             )
+        
+        return CardRecognitionResult(
+            name=meta.name,
+            set_code=meta.set_code,
+            collector_number=meta.collector_number,
+            art_id=meta.art_id,
+            confidence=0.85,  # High confidence when Scryfall matches
+            colors=meta.colors,
+            color_identity=meta.color_identity,
+            image_path=str(image_path),
+        )
 
 
 ###############################################################################
@@ -665,7 +598,7 @@ class CardSorterApp:
         self.disabled_bins = set(self.state.get("disabled_bins", []))
 
         self.camera = CameraCapture(cfg.camera_device_index, cfg.camera_resolution, Path("captures"), cfg.mock_mode)
-        self.recognizer = Recognizer(cfg.recognition_model_path, cfg.recognition_label_map, cfg.recognition_card_index, mock_mode=cfg.mock_mode)
+        self.recognizer = Recognizer(cfg, mock_mode=cfg.mock_mode)
         self.price_service = PriceService(
             primary=ScryfallProvider(),
             fallback=TcgplayerProvider(),
@@ -923,10 +856,12 @@ def main():
     if board is None or busio is None or PCA9685 is None:
         print("[WARNING] PCA9685 hardware libraries not available; mock mode enabled")
         cfg.mock_mode = True
+    if pytesseract is None:
+        print("[WARNING] pytesseract not installed; OCR will not work")
     servo_cfg = ServoConfig()
     app = CardSorterApp(cfg, servo_cfg)
     gui = SorterGUI(app)
-    print(f"Starting MTG sorter (mock_mode={cfg.mock_mode})")
+    print(f"Starting MTG sorter (online OCR + Scryfall, mock_mode={cfg.mock_mode})")
     gui.run()
 
 
