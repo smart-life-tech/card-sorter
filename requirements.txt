@@ -1,7 +1,7 @@
 requests
 opencv-python
 numpy
-pytesseract
+easyocr
 onnxruntime
 adafruit-circuitpython-servokit
 adafruit-blinka

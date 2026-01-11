@@ -18,9 +18,9 @@ except Exception:  # pragma: no cover - optional
     cv2 = None
 
 try:  # pragma: no cover - optional
-    import pytesseract
+    import easyocr
 except Exception:  # pragma: no cover - optional
-    pytesseract = None
+    easyocr = None
 
 try:  # pragma: no cover - optional
     import board
@@ -190,6 +190,8 @@ class Recognizer:
         self.cfg = cfg
         self.mock_mode = mock_mode
         self.card_index = self._load_card_index()
+        # Initialize EasyOCR reader (lazy load on first use)
+        self._reader = None
     
     def _load_card_index(self) -> Dict[str, CardMetadata]:
         """Load card index from JSON file"""
@@ -275,28 +277,20 @@ class Recognizer:
         return SequenceMatcher(None, s1, s2).ratio()
 
     def _extract_name_from_image(self, image_path: Path) -> Optional[str]:
-        """Extract card name from name ROI using Tesseract OCR - simplified approach"""
-        if pytesseract is None or cv2 is None:
-            print("[RECOGNIZER] pytesseract or cv2 not available")
+        """Extract card name from name ROI using EasyOCR"""
+        if easyocr is None or cv2 is None:
+            print("[RECOGNIZER] easyocr or cv2 not available")
             return None
         
-        # On Windows, attempt to auto-configure tesseract executable if not set
-        try:
-            import os
-            if os.name == "nt":
-                cmd = getattr(pytesseract.pytesseract, "tesseract_cmd", None)
-                if not cmd or not os.path.isfile(cmd):
-                    candidates = [
-                        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-                        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-                    ]
-                    for c in candidates:
-                        if os.path.isfile(c):
-                            pytesseract.pytesseract.tesseract_cmd = c
-                            print(f"[OCR] Using Tesseract at: {c}")
-                            break
-        except Exception:
-            pass
+        # Initialize EasyOCR reader on first use (GPU if available)
+        if self._reader is None:
+            try:
+                print("[OCR] Initializing EasyOCR reader (English)...")
+                self._reader = easyocr.Reader(['en'], gpu=False)  # Set gpu=True if CUDA available
+                print("[OCR] EasyOCR ready")
+            except Exception as e:
+                print(f"[OCR] Failed to initialize EasyOCR: {e}")
+                return None
         
         try:
             img = cv2.imread(str(image_path))
@@ -333,93 +327,71 @@ class Recognizer:
             variance = cv2.Laplacian(gray, cv2.CV_64F).var()
             print(f"[OCR] Sharpness: {variance:.2f}")
             
-            # Upscale significantly for better OCR (target 1600px width)
-            if gray.shape[1] < 1600:
-                scale = 1600.0 / gray.shape[1]
+            # Upscale significantly for better OCR (target 1200px width for EasyOCR)
+            if gray.shape[1] < 1200:
+                scale = 1200.0 / gray.shape[1]
                 new_w = int(gray.shape[1] * scale)
                 new_h = int(gray.shape[0] * scale)
                 gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
                 print(f"[OCR] Upscaled to {new_w}x{new_h}px")
             
-            # Save upscaled gray for inspection
+            # Apply slight Gaussian blur to reduce noise while preserving edges
+            gray_blur = cv2.GaussianBlur(gray, (3, 3), 0)
+            
+            # Adaptive threshold for better text extraction
+            binary = cv2.adaptiveThreshold(gray_blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                          cv2.THRESH_BINARY, 21, 10)
+            
+            # Save preprocessed images
             cv2.imwrite(str(Path("captures") / f"debug_gray_{debug_ts}.jpg"), gray)
+            cv2.imwrite(str(Path("captures") / f"debug_preprocessed_{debug_ts}.jpg"), binary)
             
-            # Try methods in order of simplicity
-            results = {}
-            
-            # Method 1: Raw grayscale (simplest)
-            text_raw = pytesseract.image_to_string(gray, config="--psm 7 --oem 3 -l eng").strip()
-            if text_raw:
-                results["raw"] = text_raw
-                print(f"[OCR] Raw grayscale: '{text_raw}'")
-            
-            # Method 2: OTSU threshold
-            _, binary_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            cv2.imwrite(str(Path("captures") / f"debug_otsu_{debug_ts}.jpg"), binary_otsu)
-            text_otsu = pytesseract.image_to_string(binary_otsu, config="--psm 7 --oem 3 -l eng").strip()
-            if text_otsu:
-                results["otsu"] = text_otsu
-                print(f"[OCR] OTSU: '{text_otsu}'")
-            
-            # Method 3: Inverted OTSU (for white text on dark background)
-            _, binary_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            cv2.imwrite(str(Path("captures") / f"debug_inv_{debug_ts}.jpg"), binary_inv)
-            text_inv = pytesseract.image_to_string(binary_inv, config="--psm 7 --oem 3 -l eng").strip()
-            if text_inv:
-                results["inverted"] = text_inv
-                print(f"[OCR] Inverted: '{text_inv}'")
-            
-            # Method 4: CLAHE + OTSU (for low contrast)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            gray_clahe = clahe.apply(gray)
-            _, binary_clahe = cv2.threshold(gray_clahe, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            cv2.imwrite(str(Path("captures") / f"debug_clahe_{debug_ts}.jpg"), binary_clahe)
-            text_clahe = pytesseract.image_to_string(binary_clahe, config="--psm 7 --oem 3 -l eng").strip()
-            if text_clahe:
-                results["clahe"] = text_clahe
-                print(f"[OCR] CLAHE+OTSU: '{text_clahe}'")
-            
-            if not results:
-                print("[OCR] No text detected with any method")
-                return None
-            
-            # Clean and select best result
-            from collections import Counter
-            print(f"[OCR] All results: {results}")
-            
-            cleaned = []
-            for method, text in results.items():
-                # Clean: letters and spaces only
-                name = text.strip().replace("\n", " ")
-                name = ''.join(c for c in name if c.isalpha() or c.isspace())
-                name = ' '.join(name.split()).strip()
+            # Run EasyOCR on preprocessed image
+            try:
+                results = self._reader.readtext(binary)
+                print(f"[OCR] EasyOCR found {len(results)} text regions")
+                
+                if not results:
+                    print("[OCR] No text detected")
+                    return None
+                
+                # Filter and sort by confidence
+                valid_results = []
+                for bbox, text, conf in results:
+                    # Clean text: letters and spaces only
+                    clean_text = ''.join(c for c in text if c.isalpha() or c.isspace())
+                    clean_text = ' '.join(clean_text.split()).strip()
+                    
+                    if clean_text and len(clean_text) >= 2:
+                        valid_results.append((clean_text, conf))
+                        print(f"[OCR] Detected: '{clean_text}' (confidence: {conf:.3f})")
+                
+                if not valid_results:
+                    print("[OCR] No valid text after filtering")
+                    return None
+                
+                # Sort by confidence and take the best
+                valid_results.sort(key=lambda x: x[1], reverse=True)
+                best_name = valid_results[0][0]
+                best_conf = valid_results[0][1]
                 
                 # Remove single-letter words from ends
-                words = name.split()
+                words = best_name.split()
                 if len(words) > 1:
                     while words and len(words[0]) == 1:
                         words.pop(0)
                     while words and len(words[-1]) == 1:
                         words.pop()
-                    name = ' '.join(words)
+                    best_name = ' '.join(words)
                 
-                if name and len(name) >= 2:
-                    cleaned.append((method, name))
-            
-            if not cleaned:
-                print("[OCR] No valid text after cleaning")
+                print(f"[OCR] Final result: '{best_name}' (confidence: {best_conf:.3f})")
+                return best_name
+                
+            except Exception as e:
+                print(f"[OCR] EasyOCR processing error: {e}")
+                import traceback
+                traceback.print_exc()
                 return None
-            
-            # If multiple results, use most common; otherwise use the only one
-            if len(cleaned) > 1:
-                counter = Counter([name for _, name in cleaned])
-                best_name = counter.most_common(1)[0][0]
-                print(f"[OCR] Final (voted): '{best_name}'")
-            else:
-                best_name = cleaned[0][1]
-                print(f"[OCR] Final (single): '{best_name}' from {cleaned[0][0]}")
-            
-            return best_name
             
         except Exception as exc:
             print(f"[RECOGNIZER] OCR error: {exc}")
@@ -1136,12 +1108,12 @@ def main():
     if board is None or busio is None or PCA9685 is None:
         print("[WARNING] PCA9685 hardware libraries not available; mock mode enabled")
         cfg.mock_mode = True
-    if pytesseract is None:
-        print("[WARNING] pytesseract not installed; OCR will not work")
+    if easyocr is None:
+        print("[WARNING] easyocr not installed; OCR will not work")
     servo_cfg = ServoConfig()
     app = CardSorterApp(cfg, servo_cfg)
     gui = SorterGUI(app)
-    print(f"Starting MTG sorter (online OCR + Scryfall, mock_mode={cfg.mock_mode})")
+    print(f"Starting MTG sorter (EasyOCR + Scryfall, mock_mode={cfg.mock_mode})")
     gui.run()
 
 
