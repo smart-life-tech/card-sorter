@@ -329,14 +329,14 @@ class Recognizer:
             
             # Method 1: Simple OTSU
             _, binary1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            text1 = pytesseract.image_to_string(binary1, config="--psm 7 -l eng").strip()
+            text1 = pytesseract.image_to_string(binary1, config="--psm 7 --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").strip()
             if text1:
                 results.append(text1)
                 cv2.imwrite(str(Path("captures") / f"debug_otsu_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"), binary1)
             
             # Method 2: Inverted OTSU
             _, binary2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            text2 = pytesseract.image_to_string(binary2, config="--psm 7 -l eng").strip()
+            text2 = pytesseract.image_to_string(binary2, config="--psm 7 --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").strip()
             if text2:
                 results.append(text2)
                 cv2.imwrite(str(Path("captures") / f"debug_inv_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"), binary2)
@@ -344,11 +344,43 @@ class Recognizer:
             # Method 3: Adaptive threshold (for uneven lighting)
             binary3 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                                            cv2.THRESH_BINARY, 21, 10)
-            text3 = pytesseract.image_to_string(binary3, config="--psm 7 -l eng").strip()
+            text3 = pytesseract.image_to_string(binary3, config="--psm 7 --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").strip()
             if text3:
                 results.append(text3)
                 cv2.imwrite(str(Path("captures") / f"debug_adaptive_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"), binary3)
             
+            # Fallback: word-level extraction via image_to_data if string methods failed
+            if not results:
+                try:
+                    from pytesseract import Output as TessOutput
+                    data_variants = [
+                        ("gray", gray),
+                        ("otsu", binary1),
+                        ("inv", binary2),
+                        ("adaptive", binary3),
+                    ]
+                    for tag, imgv in data_variants:
+                        data = pytesseract.image_to_data(imgv, config="--psm 7 --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", output_type=TessOutput.DICT)
+                        words = []
+                        confs = data.get("conf", [])
+                        texts = data.get("text", [])
+                        for i in range(len(confs)):
+                            conf_str = confs[i]
+                            try:
+                                conf_val = float(conf_str)
+                            except Exception:
+                                conf_val = -1.0
+                            if conf_val >= 40.0:
+                                wtxt = texts[i].strip()
+                                if wtxt and any(ch.isalpha() for ch in wtxt):
+                                    words.append(wtxt)
+                        candidate = " ".join(words).strip()
+                        if candidate:
+                            print(f"[OCR] data() candidate ({tag}): {candidate}")
+                            results.append(candidate)
+                except Exception as exd:
+                    print(f"[OCR] data() fallback error: {exd}")
+
             if not results:
                 print("[OCR] No text detected with any method")
                 return None
