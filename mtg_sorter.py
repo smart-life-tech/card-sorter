@@ -306,8 +306,16 @@ class Recognizer:
             if variance < 50:
                 print(f"[OCR] Warning: Image may be too blurry")
             
+            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            gray = clahe.apply(gray)
+            
             # Denoise before processing
             gray = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+            
+            # Sharpen the image
+            kernel_sharpen = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+            gray = cv2.filter2D(gray, -1, kernel_sharpen)
             
             # Upscale for better OCR (target 600px width for stability)
             if gray.shape[1] < 600:
@@ -820,7 +828,7 @@ class CardSorterApp:
         time.sleep(0.25)
         move_servo(self.pca, ch, close_deg, self.servo_cfg, self.cfg.mock_mode)
 
-    def process_once(self) -> RoutingDecision:
+    def process_once(self) -> tuple[RoutingDecision, CardRecognitionResult]:
         image_path = self.camera.capture()
         rec = self.recognizer.recognize(image_path)
 
@@ -856,7 +864,7 @@ class CardSorterApp:
         self.state["last_bin"] = decision.bin_name
         save_state(self.cfg.persistence_file, {"disabled_bins": list(self.disabled_bins), "last_bin": decision.bin_name})
         print(decision)
-        return decision
+        return decision, rec
 
     def start_loop(self, on_update):
         if self._thread and self._thread.is_alive():
@@ -868,10 +876,10 @@ class CardSorterApp:
     def _loop(self, on_update):
         while not self._stop_event.is_set():
             try:
-                decision = self.process_once()
-                on_update(decision)
+                decision, rec = self.process_once()
+                on_update(decision, rec)
             except Exception as exc:
-                on_update(f"Error: {exc}")
+                on_update(f"Error: {exc}", None)
             time.sleep(0.2)
 
     def stop_loop(self):
@@ -1005,9 +1013,21 @@ class SorterGUI:
         self.app.stop_loop()
         self.status_var.set("Stopped")
 
-    def _on_update(self, msg):
+    def _on_update(self, msg, rec=None):
         if isinstance(msg, RoutingDecision):
             self.status_var.set(f"{msg.bin_name} ({msg.reason})")
+            # Update card info display with recognized card
+            if rec and rec.name:
+                self.ocr_text_var.set(rec.name)
+                info_text = f"Name: {rec.name}\nSet: {rec.set_code or 'N/A'}\nCollector #: {rec.collector_number or 'N/A'}\nConfidence: {rec.confidence:.2f}"
+                if rec.colors:
+                    info_text += f"\nColors: {', '.join(rec.colors)}"
+                self.card_info_text.config(state=tk.NORMAL)
+                self.card_info_text.delete(1.0, tk.END)
+                self.card_info_text.insert(1.0, info_text)
+                self.card_info_text.config(state=tk.DISABLED)
+            else:
+                self.ocr_text_var.set("[No card detected]")
         else:
             self.status_var.set(str(msg))
     
