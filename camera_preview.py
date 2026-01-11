@@ -22,10 +22,9 @@ from card_sorter.config_loader import AppConfig
 
 
 def detect_card_and_warp(frame):
-    """Detect card in frame and return warped version (same as in mtg_sorter_cli)"""
+    """Detect card; return warped card image if found, else None."""
     if frame is None:
         return None
-    
     try:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -33,7 +32,11 @@ def detect_card_and_warp(frame):
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return None
+        # Pick largest contour but ignore tiny areas (<3% of frame)
+        frame_area = frame.shape[0] * frame.shape[1]
         cnt = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(cnt) < 0.03 * frame_area:
+            return None
         peri = cv2.arcLength(cnt, True)
         approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
         if len(approx) != 4:
@@ -46,13 +49,14 @@ def detect_card_and_warp(frame):
         tr = pts[np.argmin(diff)]
         bl = pts[np.argmax(diff)]
         ordered = np.array([tl, tr, br, bl], dtype="float32")
+        # Target size with MTG aspect ratio (~0.714). Width 720 → height ~1008.
         w = 720
-        h = 1024
+        h = int(w / 0.714)
         dst = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype="float32")
         M = cv2.getPerspectiveTransform(ordered, dst)
-        warped = cv2.warpPerspective(frame, M, (w, h))
+        warped = cv2.warpPerspective(frame, M, (w, h), flags=cv2.INTER_LINEAR)
         return warped
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -182,15 +186,14 @@ class CameraPreview:
                 
                 self.frame_count += 1
                 
-                # Optionally detect and warp card; default is raw feed to avoid distortion
-                warped = detect_card_and_warp(frame) if self.warp_var.get() else None
+                # Detect card always; use warp only if enabled to avoid distortion
+                warped = detect_card_and_warp(frame)
+                self.card_detected = warped is not None
 
-                if warped is not None:
-                    self.card_detected = True
+                if self.warp_var.get() and warped is not None:
                     display_frame = warped
                     h, w = warped.shape[:2]
                 else:
-                    self.card_detected = False
                     display_frame = frame
                     h, w = frame.shape[:2]
                 
