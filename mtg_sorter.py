@@ -275,10 +275,11 @@ class Recognizer:
         return SequenceMatcher(None, s1, s2).ratio()
 
     def _extract_name_from_image(self, image_path: Path) -> Optional[str]:
-        """Extract card name from name ROI using Tesseract OCR"""
+        """Extract card name from name ROI using Tesseract OCR - simplified approach"""
         if pytesseract is None or cv2 is None:
             print("[RECOGNIZER] pytesseract or cv2 not available")
             return None
+        
         # On Windows, attempt to auto-configure tesseract executable if not set
         try:
             import os
@@ -286,8 +287,8 @@ class Recognizer:
                 cmd = getattr(pytesseract.pytesseract, "tesseract_cmd", None)
                 if not cmd or not os.path.isfile(cmd):
                     candidates = [
-                        r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
-                        r"C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe",
+                        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
                     ]
                     for c in candidates:
                         if os.path.isfile(c):
@@ -302,6 +303,7 @@ class Recognizer:
             if img is None:
                 return None
             
+            # Extract ROI
             h, w = img.shape[:2]
             x1 = int(self.cfg.name_roi[0] * w)
             y1 = int(self.cfg.name_roi[1] * h)
@@ -309,152 +311,120 @@ class Recognizer:
             y2 = int(self.cfg.name_roi[3] * h)
             roi = img[y1:y2, x1:x2]
             
-            # Save raw ROI for debugging
-            debug_raw = Path("captures") / f"debug_raw_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"
+            # Save ROI with visualization for debugging
+            debug_ts = datetime.now(timezone.utc).strftime('%H%M%S')
+            debug_raw = Path("captures") / f"debug_raw_{debug_ts}.jpg"
             cv2.imwrite(str(debug_raw), roi)
-            print(f"[OCR] Raw ROI saved: {debug_raw}")
+            
+            # Save full image with ROI rectangle
+            debug_full = Path("captures") / f"debug_full_roi_{debug_ts}.jpg"
+            img_viz = img.copy()
+            cv2.rectangle(img_viz, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.imwrite(str(debug_full), img_viz)
+            print(f"[OCR] ROI saved: {debug_raw} | Full image with ROI: {debug_full}")
+            print(f"[OCR] ROI coords: ({x1},{y1}) to ({x2},{y2}) | Size: {x2-x1}x{y2-y1}px")
             
             # Convert to grayscale
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             mean_brightness = float(np.mean(gray))
             print(f"[OCR] Mean brightness: {mean_brightness:.1f}")
             
-            # Check image quality (variance of Laplacian for blur detection)
+            # Check sharpness
             variance = cv2.Laplacian(gray, cv2.CV_64F).var()
-            print(f"[OCR] Image sharpness: {variance:.2f} (higher is sharper)")
-            if variance < 50:
-                print(f"[OCR] Warning: Image may be too blurry")
+            print(f"[OCR] Sharpness: {variance:.2f}")
             
-            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            gray = clahe.apply(gray)
-            
-            # Denoise before processing
-            gray = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
-            
-            # Sharpen the image
-            kernel_sharpen = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-            gray = cv2.filter2D(gray, -1, kernel_sharpen)
-            
-            # Upscale for better OCR (target 800px width for stability)
-            if gray.shape[1] < 800:
-                scale = 800.0 / gray.shape[1]
+            # Upscale significantly for better OCR (target 1600px width)
+            if gray.shape[1] < 1600:
+                scale = 1600.0 / gray.shape[1]
                 new_w = int(gray.shape[1] * scale)
                 new_h = int(gray.shape[0] * scale)
                 gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+                print(f"[OCR] Upscaled to {new_w}x{new_h}px")
             
-            # Try multiple preprocessing approaches and vote on result
-            results = []
+            # Save upscaled gray for inspection
+            cv2.imwrite(str(Path("captures") / f"debug_gray_{debug_ts}.jpg"), gray)
             
-            # Method 1: Simple OTSU + morphological close
-            debug_ts = datetime.now(timezone.utc).strftime('%H%M%S')
-            _, binary1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            kernel3 = np.ones((3,3), np.uint8)
-            binary1c = cv2.morphologyEx(binary1, cv2.MORPH_CLOSE, kernel3)
-            cv2.imwrite(str(Path("captures") / f"debug_otsu_{debug_ts}.jpg"), binary1)
-            cv2.imwrite(str(Path("captures") / f"debug_otsu_close_{debug_ts}.jpg"), binary1c)
-            # Try multiple PSMs
-            for psm in (7, 8, 13):
-                cfgs = f"--psm {psm} --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz --dpi 300"
-                text1 = pytesseract.image_to_string(binary1c, config=cfgs).strip()
-                if text1:
-                    results.append(text1)
+            # Try methods in order of simplicity
+            results = {}
             
-            # Method 2: Inverted OTSU + morphological close
-            _, binary2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            binary2c = cv2.morphologyEx(binary2, cv2.MORPH_CLOSE, kernel3)
-            cv2.imwrite(str(Path("captures") / f"debug_inv_{debug_ts}.jpg"), binary2)
-            cv2.imwrite(str(Path("captures") / f"debug_inv_close_{debug_ts}.jpg"), binary2c)
-            for psm in (7, 8, 13):
-                cfgs = f"--psm {psm} --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz --dpi 300"
-                text2 = pytesseract.image_to_string(binary2c, config=cfgs).strip()
-                if text2:
-                    results.append(text2)
+            # Method 1: Raw grayscale (simplest)
+            text_raw = pytesseract.image_to_string(gray, config="--psm 7 --oem 3 -l eng").strip()
+            if text_raw:
+                results["raw"] = text_raw
+                print(f"[OCR] Raw grayscale: '{text_raw}'")
             
-            # Method 3: Adaptive threshold (for uneven lighting) + morphological close
-            binary3 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                           cv2.THRESH_BINARY, 21, 10)
-            binary3c = cv2.morphologyEx(binary3, cv2.MORPH_CLOSE, kernel3)
-            cv2.imwrite(str(Path("captures") / f"debug_adaptive_{debug_ts}.jpg"), binary3)
-            cv2.imwrite(str(Path("captures") / f"debug_adaptive_close_{debug_ts}.jpg"), binary3c)
-            for psm in (7, 8, 13):
-                cfgs = f"--psm {psm} --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz --dpi 300"
-                text3 = pytesseract.image_to_string(binary3c, config=cfgs).strip()
-                if text3:
-                    results.append(text3)
+            # Method 2: OTSU threshold
+            _, binary_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            cv2.imwrite(str(Path("captures") / f"debug_otsu_{debug_ts}.jpg"), binary_otsu)
+            text_otsu = pytesseract.image_to_string(binary_otsu, config="--psm 7 --oem 3 -l eng").strip()
+            if text_otsu:
+                results["otsu"] = text_otsu
+                print(f"[OCR] OTSU: '{text_otsu}'")
             
-            # Fallback: word-level extraction via image_to_data if string methods failed
-            if not results:
-                try:
-                    from pytesseract import Output as TessOutput
-                    data_variants = [
-                        ("gray", gray),
-                        ("otsu", binary1),
-                        ("inv", binary2),
-                        ("adaptive", binary3),
-                    ]
-                    for tag, imgv in data_variants:
-                        for psm in (7, 8, 13):
-                            cfgs = f"--psm {psm} --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz --dpi 300"
-                            data = pytesseract.image_to_data(imgv, config=cfgs, output_type=TessOutput.DICT)
-                            words = []
-                            confs = data.get("conf", [])
-                            texts = data.get("text", [])
-                            for i in range(len(confs)):
-                                conf_str = confs[i]
-                                try:
-                                    conf_val = float(conf_str)
-                                except Exception:
-                                    conf_val = -1.0
-                                if conf_val >= 40.0:
-                                    wtxt = texts[i].strip()
-                                    if wtxt and any(ch.isalpha() for ch in wtxt):
-                                        words.append(wtxt)
-                            candidate = " ".join(words).strip()
-                            if candidate:
-                                print(f"[OCR] data() candidate ({tag}, psm={psm}): {candidate}")
-                                results.append(candidate)
-                except Exception as exd:
-                    print(f"[OCR] data() fallback error: {exd}")
-
+            # Method 3: Inverted OTSU (for white text on dark background)
+            _, binary_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            cv2.imwrite(str(Path("captures") / f"debug_inv_{debug_ts}.jpg"), binary_inv)
+            text_inv = pytesseract.image_to_string(binary_inv, config="--psm 7 --oem 3 -l eng").strip()
+            if text_inv:
+                results["inverted"] = text_inv
+                print(f"[OCR] Inverted: '{text_inv}'")
+            
+            # Method 4: CLAHE + OTSU (for low contrast)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            gray_clahe = clahe.apply(gray)
+            _, binary_clahe = cv2.threshold(gray_clahe, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            cv2.imwrite(str(Path("captures") / f"debug_clahe_{debug_ts}.jpg"), binary_clahe)
+            text_clahe = pytesseract.image_to_string(binary_clahe, config="--psm 7 --oem 3 -l eng").strip()
+            if text_clahe:
+                results["clahe"] = text_clahe
+                print(f"[OCR] CLAHE+OTSU: '{text_clahe}'")
+            
             if not results:
                 print("[OCR] No text detected with any method")
                 return None
             
-            # Pick the most common result (majority vote)
+            # Clean and select best result
             from collections import Counter
             print(f"[OCR] All results: {results}")
             
-            # Clean all results and find most common
-            cleaned_results = []
-            for text in results:
+            cleaned = []
+            for method, text in results.items():
+                # Clean: letters and spaces only
                 name = text.strip().replace("\n", " ")
                 name = ''.join(c for c in name if c.isalpha() or c.isspace())
                 name = ' '.join(name.split()).strip()
+                
+                # Remove single-letter words from ends
+                words = name.split()
+                if len(words) > 1:
+                    while words and len(words[0]) == 1:
+                        words.pop(0)
+                    while words and len(words[-1]) == 1:
+                        words.pop()
+                    name = ' '.join(words)
+                
                 if name and len(name) >= 2:
-                    cleaned_results.append(name)
+                    cleaned.append((method, name))
             
-            if not cleaned_results:
+            if not cleaned:
                 print("[OCR] No valid text after cleaning")
                 return None
             
-            # Use most common result
-            counter = Counter(cleaned_results)
-            best_name = counter.most_common(1)[0][0]
+            # If multiple results, use most common; otherwise use the only one
+            if len(cleaned) > 1:
+                counter = Counter([name for _, name in cleaned])
+                best_name = counter.most_common(1)[0][0]
+                print(f"[OCR] Final (voted): '{best_name}'")
+            else:
+                best_name = cleaned[0][1]
+                print(f"[OCR] Final (single): '{best_name}' from {cleaned[0][0]}")
             
-            # Remove single-letter words from start and end
-            words = best_name.split()
-            if len(words) > 1:
-                while words and len(words[0]) == 1:
-                    words.pop(0)
-                while words and len(words[-1]) == 1:
-                    words.pop()
-                best_name = ' '.join(words)
+            return best_name
             
-            print(f"[OCR] Final result (voted): '{best_name}'")
-            return best_name if len(best_name) >= 2 else None
         except Exception as exc:
             print(f"[RECOGNIZER] OCR error: {exc}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _lookup_card(self, name: str) -> Optional[CardMetadata]:
