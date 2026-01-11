@@ -129,7 +129,23 @@ class RoutingDecision:
 
 
 ###############################################################################
-# Helpers: PCA9685
+# Helpers: Cleanup
+###############################################################################
+
+
+def clear_captures_dir(capture_dir: Path) -> None:
+    """Clear all files from captures directory on startup"""
+    if capture_dir.exists():
+        try:
+            import shutil
+            for item in capture_dir.iterdir():
+                if item.is_file():
+                    item.unlink()
+            print(f"[STARTUP] Cleared captures directory")
+        except Exception as e:
+            print(f"[STARTUP] Failed to clear captures: {e}")
+
+
 ###############################################################################
 
 
@@ -285,8 +301,17 @@ class Recognizer:
         # Initialize EasyOCR reader on first use (GPU if available)
         if self._reader is None:
             try:
-                print("[OCR] Initializing EasyOCR reader (English)...")
-                self._reader = easyocr.Reader(['en'], gpu=False)  # Set gpu=True if CUDA available
+                # Try to detect GPU availability
+                try:
+                    import torch
+                    use_gpu = torch.cuda.is_available()
+                    if use_gpu:
+                        print("[OCR] GPU detected, using CUDA for EasyOCR")
+                except Exception:
+                    use_gpu = False
+                
+                print(f"[OCR] Initializing EasyOCR reader (English, gpu={use_gpu})...")
+                self._reader = easyocr.Reader(['en'], gpu=use_gpu)
                 print("[OCR] EasyOCR ready")
             except Exception as e:
                 print(f"[OCR] Failed to initialize EasyOCR: {e}")
@@ -327,19 +352,16 @@ class Recognizer:
             variance = cv2.Laplacian(gray, cv2.CV_64F).var()
             print(f"[OCR] Sharpness: {variance:.2f}")
             
-            # Upscale significantly for better OCR (target 1200px width for EasyOCR)
-            if gray.shape[1] < 1200:
-                scale = 1200.0 / gray.shape[1]
+            # Upscale for better OCR (target 900px width for balance of speed/accuracy)
+            if gray.shape[1] < 900:
+                scale = 900.0 / gray.shape[1]
                 new_w = int(gray.shape[1] * scale)
                 new_h = int(gray.shape[0] * scale)
                 gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
                 print(f"[OCR] Upscaled to {new_w}x{new_h}px")
             
-            # Apply slight Gaussian blur to reduce noise while preserving edges
-            gray_blur = cv2.GaussianBlur(gray, (3, 3), 0)
-            
-            # Adaptive threshold for better text extraction
-            binary = cv2.adaptiveThreshold(gray_blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            # Apply adaptive threshold directly (skip blur for speed)
+            binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                                           cv2.THRESH_BINARY, 21, 10)
             
             # Save preprocessed images
@@ -800,6 +822,9 @@ def save_state(path: Path, state: Dict[str, object]) -> None:
 
 class CardSorterApp:
     def __init__(self, cfg: AppConfig, servo_cfg: ServoConfig):
+        # Clear old captures on startup
+        clear_captures_dir(Path("captures"))
+        
         self.cfg = cfg
         self.servo_cfg = servo_cfg
         self.state = load_state(cfg.persistence_file)
