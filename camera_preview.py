@@ -108,6 +108,11 @@ class CameraPreview:
         self.card_var = tk.StringVar(value="Not detected")
         self.card_label = ttk.Label(status_frame, textvariable=self.card_var, foreground="red")
         self.card_label.pack(side=tk.LEFT, padx=5)
+
+        # Warp toggle
+        ttk.Label(status_frame, text="Mode:").pack(side=tk.LEFT, padx=20)
+        self.warp_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(status_frame, text="Warp card (perspective)", variable=self.warp_var).pack(side=tk.LEFT)
         
         # Frame counter
         ttk.Label(status_frame, text="Frames:").pack(side=tk.LEFT, padx=20)
@@ -177,16 +182,14 @@ class CameraPreview:
                 
                 self.frame_count += 1
                 
-                # Detect and warp card
-                warped = detect_card_and_warp(frame)
-                
+                # Optionally detect and warp card; default is raw feed to avoid distortion
+                warped = detect_card_and_warp(frame) if self.warp_var.get() else None
+
                 if warped is not None:
-                    # Use warped card image
                     self.card_detected = True
                     display_frame = warped
                     h, w = warped.shape[:2]
                 else:
-                    # Use raw camera frame if no card detected
                     self.card_detected = False
                     display_frame = frame
                     h, w = frame.shape[:2]
