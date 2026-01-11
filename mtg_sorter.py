@@ -292,6 +292,11 @@ class Recognizer:
             y2 = int(self.cfg.name_roi[3] * h)
             roi = img[y1:y2, x1:x2]
             
+            # Save raw ROI for debugging
+            debug_raw = Path("captures") / f"debug_raw_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"
+            cv2.imwrite(str(debug_raw), roi)
+            print(f"[OCR] Raw ROI saved: {debug_raw}")
+            
             # Enhanced preprocessing for better OCR
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             
@@ -302,36 +307,27 @@ class Recognizer:
                 new_h = int(gray.shape[0] * scale)
                 gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
             
-            # Apply bilateral filter to reduce noise while keeping edges
-            gray = cv2.bilateralFilter(gray, 9, 75, 75)
+            # Use simple thresholding - adaptive was picking up too much noise
+            # First try to detect if text is light or dark
+            mean_val = np.mean(gray)
+            if mean_val > 127:
+                # Light background, dark text - use inverse binary
+                _, gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            else:
+                # Dark background, light text
+                _, gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             
-            # Adaptive thresholding works better than OTSU for varying lighting
-            gray = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                         cv2.THRESH_BINARY, 11, 2)
-            
-            # Optional: morphological operations to clean up
-            kernel = np.ones((1, 1), np.uint8)
-            gray = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
+            # Dilate to connect broken letters
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 1))
+            gray = cv2.dilate(gray, kernel, iterations=1)
             
             # Save debug image to see what OCR is processing
             debug_path = Path("captures") / f"debug_ocr_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"
             cv2.imwrite(str(debug_path), gray)
-            print(f"[OCR] Debug image saved: {debug_path}")
+            print(f"[OCR] Processed image saved: {debug_path}")
             
-            # Try multiple PSM modes for better results
-            configs = [
-                "--psm 7 -l eng",  # Single text line
-                "--psm 6 -l eng",  # Uniform block of text
-                "--psm 13 -l eng", # Raw line (no OSD)
-            ]
-            
-            best_text = ""
-            for config in configs:
-                text = pytesseract.image_to_string(gray, config=config).strip()
-                if len(text) > len(best_text):
-                    best_text = text
-            
-            text = best_text
+            # Use single PSM mode optimized for card names
+            text = pytesseract.image_to_string(gray, config="--psm 7 -l eng --oem 3")
             
             if not text:
                 return None
@@ -354,7 +350,25 @@ class Recognizer:
                     words.pop()
                 name = ' '.join(words)
             
-            print(f"[OCR] Detected: '{name}'")
+            # Additional filtering: find the longest contiguous sequence of reasonable words
+            # This helps when OCR picks up card texture/background noise
+            if len(words) > 3:
+                # Look for sequences of 1-3 capitalized words (typical card names)
+                for i in range(len(words)):
+                    for length in [3, 2, 1]:  # Try 3 words, then 2, then 1
+                        if i + length <= len(words):
+                            candidate = ' '.join(words[i:i+length])
+                            # Check if this looks like a real card name (proper capitalization pattern)
+                            if candidate and len(candidate) >= 3:
+                                # Prefer this if it's shorter and cleaner
+                                if length <= 3:
+                                    name = candidate
+                                    break
+                    if len(name.split()) <= 3:
+                        break
+            
+            print(f"[OCR] Raw text: '{text}'")
+            print(f"[OCR] Cleaned: '{name}'")
             return name if len(name) >= 2 else None
         except Exception as exc:
             print(f"[RECOGNIZER] OCR error: {exc}")
