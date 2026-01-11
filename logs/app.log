@@ -3,3 +3,33 @@
 [2025-12-13 10:07:50,296] [WARNING ] card_sorter.recognize: Card index not found at models\card_index.json
 [2025-12-13 10:30:27,046] [WARNING ] card_sorter.recognize: Recognition model not found at models\card_recognizer.onnx; running in recognition-disabled mode
 [2025-12-13 10:35:24,487] [WARNING ] card_sorter.recognize: Recognition model not found at models\card_recognizer.onnx; running in recognition-disabled mode
+[2026-01-11 16:46:42,768] [INFO    ] card_sorter.main: ============================================================
+[2026-01-11 16:46:42,769] [INFO    ] card_sorter.main: Card Sorter Application Starting
+[2026-01-11 16:46:42,769] [INFO    ] card_sorter.main: ============================================================
+[2026-01-11 16:46:42,787] [INFO    ] card_sorter.main: Initializing Card Sorter App
+[2026-01-11 16:46:42,787] [INFO    ] card_sorter.main: mock_mode=False
+[2026-01-11 16:46:42,790] [INFO    ] card_sorter.main: Loaded state: mode=color, threshold=$2.16
+[2026-01-11 16:46:42,791] [INFO    ] card_sorter.main: CSV logging to ./logs
+[2026-01-11 16:46:42,792] [INFO    ] card_sorter.main: Camera initialized: 1920x1080
+[2026-01-11 16:46:42,793] [WARNING ] card_sorter.recognize: Recognition model not found at models\card_recognizer.onnx; running in recognition-disabled mode
+[2026-01-11 16:46:45,560] [INFO    ] card_sorter.main: Recognizer ready (model: ./models/card_recognizer.onnx)
+[2026-01-11 16:46:45,562] [INFO    ] card_sorter.main: Price service: primary=scryfall, fallback=tcgplayer
+[2026-01-11 16:46:45,562] [INFO    ] card_sorter.main: Router ready. Disabled bins: none
+[2026-01-11 16:46:45,564] [INFO    ] card_sorter.main: Servo actuator ready (PCA9685 @ 0x40)
+[2026-01-11 16:46:45,565] [INFO    ] card_sorter.main: Launching GUI...
+[2026-01-11 16:46:52,090] [INFO    ] card_sorter.main: Starting processing loop
+[2026-01-11 16:46:52,592] [INFO    ] card_sorter.main: --- Processing card ---
+[2026-01-11 16:46:56,697] [INFO    ] card_sorter.main: Testing bin: green_bin
+[2026-01-11 16:46:59,742] [INFO    ] card_sorter.main: Shutting down Card Sorter
+[2026-01-11 16:47:02,996] [ERROR   ] card_sorter.main: Error processing card: Camera failed to open.
+Traceback (most recent call last):
+  File "C:\Users\USER\Documents\raspberrypi\card-sorter\src\card_sorter\main.py", line 84, in process_once
+    image_path = self.camera.capture()
+                 ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\Documents\raspberrypi\card-sorter\src\card_sorter\capture.py", line 44, in capture
+    self._ensure_camera()
+  File "C:\Users\USER\Documents\raspberrypi\card-sorter\src\card_sorter\capture.py", line 30, in _ensure_camera
+    raise RuntimeError("Camera failed to open.")
+RuntimeError: Camera failed to open.
+[2026-01-11 16:47:03,003] [INFO    ] card_sorter.main: Processing loop stopped
+[2026-01-11 16:47:03,005] [INFO    ] card_sorter.main: Shutdown complete

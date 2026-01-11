@@ -279,6 +279,23 @@ class Recognizer:
         if pytesseract is None or cv2 is None:
             print("[RECOGNIZER] pytesseract or cv2 not available")
             return None
+        # On Windows, attempt to auto-configure tesseract executable if not set
+        try:
+            import os
+            if os.name == "nt":
+                cmd = getattr(pytesseract.pytesseract, "tesseract_cmd", None)
+                if not cmd or not os.path.isfile(cmd):
+                    candidates = [
+                        r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+                        r"C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe",
+                    ]
+                    for c in candidates:
+                        if os.path.isfile(c):
+                            pytesseract.pytesseract.tesseract_cmd = c
+                            print(f"[OCR] Using Tesseract at: {c}")
+                            break
+        except Exception:
+            pass
         
         try:
             img = cv2.imread(str(image_path))
@@ -299,6 +316,8 @@ class Recognizer:
             
             # Convert to grayscale
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            mean_brightness = float(np.mean(gray))
+            print(f"[OCR] Mean brightness: {mean_brightness:.1f}")
             
             # Check image quality (variance of Laplacian for blur detection)
             variance = cv2.Laplacian(gray, cv2.CV_64F).var()
@@ -317,9 +336,9 @@ class Recognizer:
             kernel_sharpen = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
             gray = cv2.filter2D(gray, -1, kernel_sharpen)
             
-            # Upscale for better OCR (target 600px width for stability)
-            if gray.shape[1] < 600:
-                scale = 600.0 / gray.shape[1]
+            # Upscale for better OCR (target 800px width for stability)
+            if gray.shape[1] < 800:
+                scale = 800.0 / gray.shape[1]
                 new_w = int(gray.shape[1] * scale)
                 new_h = int(gray.shape[0] * scale)
                 gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
@@ -327,27 +346,42 @@ class Recognizer:
             # Try multiple preprocessing approaches and vote on result
             results = []
             
-            # Method 1: Simple OTSU
+            # Method 1: Simple OTSU + morphological close
+            debug_ts = datetime.now(timezone.utc).strftime('%H%M%S')
             _, binary1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            text1 = pytesseract.image_to_string(binary1, config="--psm 7 --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").strip()
-            if text1:
-                results.append(text1)
-                cv2.imwrite(str(Path("captures") / f"debug_otsu_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"), binary1)
+            kernel3 = np.ones((3,3), np.uint8)
+            binary1c = cv2.morphologyEx(binary1, cv2.MORPH_CLOSE, kernel3)
+            cv2.imwrite(str(Path("captures") / f"debug_otsu_{debug_ts}.jpg"), binary1)
+            cv2.imwrite(str(Path("captures") / f"debug_otsu_close_{debug_ts}.jpg"), binary1c)
+            # Try multiple PSMs
+            for psm in (7, 8, 13):
+                cfgs = f"--psm {psm} --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz --dpi 300"
+                text1 = pytesseract.image_to_string(binary1c, config=cfgs).strip()
+                if text1:
+                    results.append(text1)
             
-            # Method 2: Inverted OTSU
+            # Method 2: Inverted OTSU + morphological close
             _, binary2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            text2 = pytesseract.image_to_string(binary2, config="--psm 7 --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").strip()
-            if text2:
-                results.append(text2)
-                cv2.imwrite(str(Path("captures") / f"debug_inv_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"), binary2)
+            binary2c = cv2.morphologyEx(binary2, cv2.MORPH_CLOSE, kernel3)
+            cv2.imwrite(str(Path("captures") / f"debug_inv_{debug_ts}.jpg"), binary2)
+            cv2.imwrite(str(Path("captures") / f"debug_inv_close_{debug_ts}.jpg"), binary2c)
+            for psm in (7, 8, 13):
+                cfgs = f"--psm {psm} --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz --dpi 300"
+                text2 = pytesseract.image_to_string(binary2c, config=cfgs).strip()
+                if text2:
+                    results.append(text2)
             
-            # Method 3: Adaptive threshold (for uneven lighting)
+            # Method 3: Adaptive threshold (for uneven lighting) + morphological close
             binary3 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                                            cv2.THRESH_BINARY, 21, 10)
-            text3 = pytesseract.image_to_string(binary3, config="--psm 7 --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").strip()
-            if text3:
-                results.append(text3)
-                cv2.imwrite(str(Path("captures") / f"debug_adaptive_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"), binary3)
+            binary3c = cv2.morphologyEx(binary3, cv2.MORPH_CLOSE, kernel3)
+            cv2.imwrite(str(Path("captures") / f"debug_adaptive_{debug_ts}.jpg"), binary3)
+            cv2.imwrite(str(Path("captures") / f"debug_adaptive_close_{debug_ts}.jpg"), binary3c)
+            for psm in (7, 8, 13):
+                cfgs = f"--psm {psm} --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz --dpi 300"
+                text3 = pytesseract.image_to_string(binary3c, config=cfgs).strip()
+                if text3:
+                    results.append(text3)
             
             # Fallback: word-level extraction via image_to_data if string methods failed
             if not results:
@@ -360,24 +394,26 @@ class Recognizer:
                         ("adaptive", binary3),
                     ]
                     for tag, imgv in data_variants:
-                        data = pytesseract.image_to_data(imgv, config="--psm 7 --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", output_type=TessOutput.DICT)
-                        words = []
-                        confs = data.get("conf", [])
-                        texts = data.get("text", [])
-                        for i in range(len(confs)):
-                            conf_str = confs[i]
-                            try:
-                                conf_val = float(conf_str)
-                            except Exception:
-                                conf_val = -1.0
-                            if conf_val >= 40.0:
-                                wtxt = texts[i].strip()
-                                if wtxt and any(ch.isalpha() for ch in wtxt):
-                                    words.append(wtxt)
-                        candidate = " ".join(words).strip()
-                        if candidate:
-                            print(f"[OCR] data() candidate ({tag}): {candidate}")
-                            results.append(candidate)
+                        for psm in (7, 8, 13):
+                            cfgs = f"--psm {psm} --oem 1 -l eng -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz --dpi 300"
+                            data = pytesseract.image_to_data(imgv, config=cfgs, output_type=TessOutput.DICT)
+                            words = []
+                            confs = data.get("conf", [])
+                            texts = data.get("text", [])
+                            for i in range(len(confs)):
+                                conf_str = confs[i]
+                                try:
+                                    conf_val = float(conf_str)
+                                except Exception:
+                                    conf_val = -1.0
+                                if conf_val >= 40.0:
+                                    wtxt = texts[i].strip()
+                                    if wtxt and any(ch.isalpha() for ch in wtxt):
+                                        words.append(wtxt)
+                            candidate = " ".join(words).strip()
+                            if candidate:
+                                print(f"[OCR] data() candidate ({tag}, psm={psm}): {candidate}")
+                                results.append(candidate)
                 except Exception as exd:
                     print(f"[OCR] data() fallback error: {exd}")
 
