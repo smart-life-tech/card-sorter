@@ -91,8 +91,8 @@ class CameraPreview:
         # Title
         ttk.Label(main_frame, text="Camera Feed with Detected Card (Warped View)", font=("Arial", 12, "bold")).pack(fill=tk.X)
         
-        # Camera preview label
-        self.preview_label = tk.Label(main_frame, bg="black", width=640, height=480)
+        # Camera preview label (auto-resizes to image size)
+        self.preview_label = tk.Label(main_frame, bg="black")
         self.preview_label.pack(fill=tk.BOTH, expand=True, pady=5)
         
         # Status bar
@@ -212,7 +212,7 @@ class CameraPreview:
                 
                 # Resize frame
                 if w != new_w or h != new_h:
-                    frame_rgb = cv2.resize(frame_rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                    frame_rgb = cv2.resize(frame_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
                 
                 # Create canvas with padding to maintain 640x480 display size
                 canvas = np.zeros((display_h, display_w, 3), dtype=np.uint8)
