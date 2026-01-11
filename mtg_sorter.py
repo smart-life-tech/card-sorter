@@ -300,61 +300,83 @@ class Recognizer:
             # Convert to grayscale
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             
-            # Upscale if too small for better OCR
-            if gray.shape[1] < 400:
-                scale = 400.0 / gray.shape[1]
+            # Check image quality (variance of Laplacian for blur detection)
+            variance = cv2.Laplacian(gray, cv2.CV_64F).var()
+            print(f"[OCR] Image sharpness: {variance:.2f} (higher is sharper)")
+            if variance < 50:
+                print(f"[OCR] Warning: Image may be too blurry")
+            
+            # Denoise before processing
+            gray = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+            
+            # Upscale for better OCR (target 600px width for stability)
+            if gray.shape[1] < 600:
+                scale = 600.0 / gray.shape[1]
                 new_w = int(gray.shape[1] * scale)
                 new_h = int(gray.shape[0] * scale)
                 gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
             
-            # Simple OTSU thresholding
-            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            # Try multiple preprocessing approaches and vote on result
+            results = []
             
-            # Try inverted too (sometimes works better for light text)
-            _, binary_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            # Method 1: Simple OTSU
+            _, binary1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            text1 = pytesseract.image_to_string(binary1, config="--psm 7 -l eng").strip()
+            if text1:
+                results.append(text1)
+                cv2.imwrite(str(Path("captures") / f"debug_otsu_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"), binary1)
             
-            # Save debug images
-            debug_path = Path("captures") / f"debug_ocr_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"
-            cv2.imwrite(str(debug_path), binary)
-            debug_inv_path = Path("captures") / f"debug_ocr_inv_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"
-            cv2.imwrite(str(debug_inv_path), binary_inv)
-            print(f"[OCR] Processed images saved: {debug_path}, {debug_inv_path}")
+            # Method 2: Inverted OTSU
+            _, binary2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            text2 = pytesseract.image_to_string(binary2, config="--psm 7 -l eng").strip()
+            if text2:
+                results.append(text2)
+                cv2.imwrite(str(Path("captures") / f"debug_inv_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"), binary2)
             
-            # Try OCR on both versions and pick the one with more text
-            text1 = pytesseract.image_to_string(binary, config="--psm 7 -l eng").strip()
-            text2 = pytesseract.image_to_string(binary_inv, config="--psm 7 -l eng").strip()
+            # Method 3: Adaptive threshold (for uneven lighting)
+            binary3 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                           cv2.THRESH_BINARY, 21, 10)
+            text3 = pytesseract.image_to_string(binary3, config="--psm 7 -l eng").strip()
+            if text3:
+                results.append(text3)
+                cv2.imwrite(str(Path("captures") / f"debug_adaptive_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"), binary3)
             
-            # Use whichever produced more alphanumeric characters
-            if len(text2) > len(text1):
-                text = text2
-                print(f"[OCR] Using inverted threshold")
-            else:
-                text = text1
-                print(f"[OCR] Using normal threshold")
-            
-            if not text:
+            if not results:
+                print("[OCR] No text detected with any method")
                 return None
             
-            print(f"[OCR] Raw text: '{text}'")
+            # Pick the most common result (majority vote)
+            from collections import Counter
+            print(f"[OCR] All results: {results}")
             
-            name = text.strip().replace("\n", " ")
-            # Keep only alphabets and spaces
-            name = ''.join(c for c in name if c.isalpha() or c.isspace())
-            # Normalize whitespace
-            name = ' '.join(name.split())
-            name = name.strip()
+            # Clean all results and find most common
+            cleaned_results = []
+            for text in results:
+                name = text.strip().replace("\n", " ")
+                name = ''.join(c for c in name if c.isalpha() or c.isspace())
+                name = ' '.join(name.split()).strip()
+                if name and len(name) >= 2:
+                    cleaned_results.append(name)
             
-            # Remove single-letter words from start and end only
-            words = name.split()
+            if not cleaned_results:
+                print("[OCR] No valid text after cleaning")
+                return None
+            
+            # Use most common result
+            counter = Counter(cleaned_results)
+            best_name = counter.most_common(1)[0][0]
+            
+            # Remove single-letter words from start and end
+            words = best_name.split()
             if len(words) > 1:
                 while words and len(words[0]) == 1:
                     words.pop(0)
                 while words and len(words[-1]) == 1:
                     words.pop()
-                name = ' '.join(words)
+                best_name = ' '.join(words)
             
-            print(f"[OCR] Cleaned: '{name}'")
-            return name if len(name) >= 2 else None
+            print(f"[OCR] Final result (voted): '{best_name}'")
+            return best_name if len(best_name) >= 2 else None
         except Exception as exc:
             print(f"[RECOGNIZER] OCR error: {exc}")
             return None
