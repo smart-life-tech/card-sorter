@@ -297,40 +297,45 @@ class Recognizer:
             cv2.imwrite(str(debug_raw), roi)
             print(f"[OCR] Raw ROI saved: {debug_raw}")
             
-            # Enhanced preprocessing for better OCR
+            # Convert to grayscale
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             
-            # Resize ROI if too small (upscale for better OCR)
-            if gray.shape[1] < 300:
-                scale = 300.0 / gray.shape[1]
+            # Upscale if too small for better OCR
+            if gray.shape[1] < 400:
+                scale = 400.0 / gray.shape[1]
                 new_w = int(gray.shape[1] * scale)
                 new_h = int(gray.shape[0] * scale)
                 gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
             
-            # Use simple thresholding - adaptive was picking up too much noise
-            # First try to detect if text is light or dark
-            mean_val = np.mean(gray)
-            if mean_val > 127:
-                # Light background, dark text - use inverse binary
-                _, gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            else:
-                # Dark background, light text
-                _, gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            # Simple OTSU thresholding
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             
-            # Dilate to connect broken letters
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 1))
-            gray = cv2.dilate(gray, kernel, iterations=1)
+            # Try inverted too (sometimes works better for light text)
+            _, binary_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
             
-            # Save debug image to see what OCR is processing
+            # Save debug images
             debug_path = Path("captures") / f"debug_ocr_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"
-            cv2.imwrite(str(debug_path), gray)
-            print(f"[OCR] Processed image saved: {debug_path}")
+            cv2.imwrite(str(debug_path), binary)
+            debug_inv_path = Path("captures") / f"debug_ocr_inv_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"
+            cv2.imwrite(str(debug_inv_path), binary_inv)
+            print(f"[OCR] Processed images saved: {debug_path}, {debug_inv_path}")
             
-            # Use single PSM mode optimized for card names
-            text = pytesseract.image_to_string(gray, config="--psm 7 -l eng --oem 3")
+            # Try OCR on both versions and pick the one with more text
+            text1 = pytesseract.image_to_string(binary, config="--psm 7 -l eng").strip()
+            text2 = pytesseract.image_to_string(binary_inv, config="--psm 7 -l eng").strip()
+            
+            # Use whichever produced more alphanumeric characters
+            if len(text2) > len(text1):
+                text = text2
+                print(f"[OCR] Using inverted threshold")
+            else:
+                text = text1
+                print(f"[OCR] Using normal threshold")
             
             if not text:
                 return None
+            
+            print(f"[OCR] Raw text: '{text}'")
             
             name = text.strip().replace("\n", " ")
             # Keep only alphabets and spaces
@@ -339,35 +344,15 @@ class Recognizer:
             name = ' '.join(name.split())
             name = name.strip()
             
-            # Remove common OCR artifacts (single letters at start/end)
+            # Remove single-letter words from start and end only
             words = name.split()
             if len(words) > 1:
-                # Remove single-letter words from start
                 while words and len(words[0]) == 1:
                     words.pop(0)
-                # Remove single-letter words from end
                 while words and len(words[-1]) == 1:
                     words.pop()
                 name = ' '.join(words)
             
-            # Additional filtering: find the longest contiguous sequence of reasonable words
-            # This helps when OCR picks up card texture/background noise
-            if len(words) > 3:
-                # Look for sequences of 1-3 capitalized words (typical card names)
-                for i in range(len(words)):
-                    for length in [3, 2, 1]:  # Try 3 words, then 2, then 1
-                        if i + length <= len(words):
-                            candidate = ' '.join(words[i:i+length])
-                            # Check if this looks like a real card name (proper capitalization pattern)
-                            if candidate and len(candidate) >= 3:
-                                # Prefer this if it's shorter and cleaner
-                                if length <= 3:
-                                    name = candidate
-                                    break
-                    if len(name.split()) <= 3:
-                        break
-            
-            print(f"[OCR] Raw text: '{text}'")
             print(f"[OCR] Cleaned: '{name}'")
             return name if len(name) >= 2 else None
         except Exception as exc:
