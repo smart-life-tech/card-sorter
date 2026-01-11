@@ -292,9 +292,46 @@ class Recognizer:
             y2 = int(self.cfg.name_roi[3] * h)
             roi = img[y1:y2, x1:x2]
             
+            # Enhanced preprocessing for better OCR
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-            gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-            text = pytesseract.image_to_string(gray, config="--psm 7 -l eng")
+            
+            # Resize ROI if too small (upscale for better OCR)
+            if gray.shape[1] < 300:
+                scale = 300.0 / gray.shape[1]
+                new_w = int(gray.shape[1] * scale)
+                new_h = int(gray.shape[0] * scale)
+                gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+            
+            # Apply bilateral filter to reduce noise while keeping edges
+            gray = cv2.bilateralFilter(gray, 9, 75, 75)
+            
+            # Adaptive thresholding works better than OTSU for varying lighting
+            gray = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                         cv2.THRESH_BINARY, 11, 2)
+            
+            # Optional: morphological operations to clean up
+            kernel = np.ones((1, 1), np.uint8)
+            gray = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
+            
+            # Save debug image to see what OCR is processing
+            debug_path = Path("captures") / f"debug_ocr_{datetime.now(timezone.utc).strftime('%H%M%S')}.jpg"
+            cv2.imwrite(str(debug_path), gray)
+            print(f"[OCR] Debug image saved: {debug_path}")
+            
+            # Try multiple PSM modes for better results
+            configs = [
+                "--psm 7 -l eng",  # Single text line
+                "--psm 6 -l eng",  # Uniform block of text
+                "--psm 13 -l eng", # Raw line (no OSD)
+            ]
+            
+            best_text = ""
+            for config in configs:
+                text = pytesseract.image_to_string(gray, config=config).strip()
+                if len(text) > len(best_text):
+                    best_text = text
+            
+            text = best_text
             
             if not text:
                 return None
