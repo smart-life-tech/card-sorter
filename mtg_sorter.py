@@ -423,13 +423,11 @@ class CameraCapture:
             raise RuntimeError("OpenCV not installed")
         if self._cap is None:
             self._cap = cv2.VideoCapture(self.device_index)
-            # Set buffersize to 1 to avoid stale frames
-            self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            # Set resolution
+            # Match preview settings: set resolution only
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
             self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
             # Small delay for camera to stabilize
-            time.sleep(0.5)
+            time.sleep(0.2)
         if not self._cap.isOpened():
             raise RuntimeError("Camera failed to open")
 
