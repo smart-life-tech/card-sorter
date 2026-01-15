@@ -49,7 +49,7 @@ class ServoConfig:
     combined_bin: int = 1
     white_blue_bin: int = 2
     black_bin: int = 3
-    red_bin: int = 15
+    red_bin: int = 4
     green_bin: int = 5
     reserve: List[int] = field(default_factory=lambda: [6, 7])
     open_deg: Dict[str, float] = field(
