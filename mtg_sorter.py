@@ -47,16 +47,18 @@ from PIL import Image, ImageTk
 class ServoConfig:
     price_bin: int = 0
     combined_bin: int = 1
-    white_blue_bin: int = 2
-    black_bin: int = 3
-    red_bin: int = 4
-    green_bin: int = 5
-    reserve: List[int] = field(default_factory=lambda: [6, 7])
+    white_bin: int = 2
+    blue_bin: int = 3
+    black_bin: int = 4
+    red_bin: int = 5
+    green_bin: int = 6
+    reserve: List[int] = field(default_factory=lambda: [7])
     open_deg: Dict[str, float] = field(
         default_factory=lambda: {
             "price_bin": 110.0,
             "combined_bin": 120.0,
-            "white_blue_bin": 115.0,
+            "white_bin": 115.0,
+            "blue_bin": 115.0,
             "black_bin": 110.0,
             "red_bin": 120.0,
             "green_bin": 115.0,
@@ -66,7 +68,8 @@ class ServoConfig:
         default_factory=lambda: {
             "price_bin": 60.0,
             "combined_bin": 70.0,
-            "white_blue_bin": 65.0,
+            "white_bin": 65.0,
+            "blue_bin": 65.0,
             "black_bin": 60.0,
             "red_bin": 70.0,
             "green_bin": 65.0,
@@ -770,8 +773,10 @@ class Router:
         if len(identity) != 1:
             return "combined_bin"
         single = identity[0]
-        if single in ("W", "U"):
-            return "white_blue_bin"
+        if single == "W":
+            return "white_bin"
+        if single == "U":
+            return "blue_bin"
         if single == "B":
             return "black_bin"
         if single == "R":
@@ -849,7 +854,8 @@ class CardSorterApp:
         channel_map = {
             "price_bin": self.servo_cfg.price_bin,
             "combined_bin": self.servo_cfg.combined_bin,
-            "white_blue_bin": self.servo_cfg.white_blue_bin,
+            "white_bin": self.servo_cfg.white_bin,
+            "blue_bin": self.servo_cfg.blue_bin,
             "black_bin": self.servo_cfg.black_bin,
             "red_bin": self.servo_cfg.red_bin,
             "green_bin": self.servo_cfg.green_bin,
@@ -982,7 +988,7 @@ class SorterGUI:
         # Bin test buttons
         ttk.Label(frm, text="Test Bins:").grid(row=6, column=0, sticky="w")
         r = 7
-        for name in ["price_bin", "combined_bin", "white_blue_bin", "black_bin", "red_bin", "green_bin"]:
+        for name in ["price_bin", "combined_bin", "white_bin", "blue_bin", "black_bin", "red_bin", "green_bin"]:
             ttk.Button(frm, text=f"Test {name}", command=lambda n=name: self._test_bin(n)).grid(row=r, column=0, columnspan=2, sticky="we")
             r += 1
         
