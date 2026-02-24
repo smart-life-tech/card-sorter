@@ -92,7 +92,10 @@ class AppConfig:
     persistence_file: Path = Path("./config/state.json")
     camera_resolution: Tuple[int, int] = (640, 480)
     camera_device_index: int = 0
-    name_roi: Tuple[float, float, float, float] = (0.08, 0.08, 0.92, 0.22)  # x1,y1,x2,y2 relative
+    # Wider/taller ROI helps when cards are moving on rollers.
+    name_roi: Tuple[float, float, float, float] = (0.03, 0.06, 0.97, 0.30)  # x1,y1,x2,y2 relative
+    ocr_target_width_px: int = 720
+    ocr_debug_images: bool = False
     card_index_path: Path = Path("./models/card_index.json")
 
 
@@ -334,17 +337,16 @@ class Recognizer:
             y2 = int(self.cfg.name_roi[3] * h)
             roi = img[y1:y2, x1:x2]
             
-            # Save ROI with visualization for debugging
-            debug_ts = datetime.now(timezone.utc).strftime('%H%M%S')
-            debug_raw = Path("captures") / f"debug_raw_{debug_ts}.jpg"
-            cv2.imwrite(str(debug_raw), roi)
-            
-            # Save full image with ROI rectangle
-            debug_full = Path("captures") / f"debug_full_roi_{debug_ts}.jpg"
-            img_viz = img.copy()
-            cv2.rectangle(img_viz, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.imwrite(str(debug_full), img_viz)
-            print(f"[OCR] ROI saved: {debug_raw} | Full image with ROI: {debug_full}")
+            if self.cfg.ocr_debug_images:
+                debug_ts = datetime.now(timezone.utc).strftime('%H%M%S')
+                debug_raw = Path("captures") / f"debug_raw_{debug_ts}.jpg"
+                cv2.imwrite(str(debug_raw), roi)
+                
+                debug_full = Path("captures") / f"debug_full_roi_{debug_ts}.jpg"
+                img_viz = img.copy()
+                cv2.rectangle(img_viz, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.imwrite(str(debug_full), img_viz)
+                print(f"[OCR] ROI saved: {debug_raw} | Full image with ROI: {debug_full}")
             print(f"[OCR] ROI coords: ({x1},{y1}) to ({x2},{y2}) | Size: {x2-x1}x{y2-y1}px")
             
             # Convert to grayscale
@@ -356,25 +358,41 @@ class Recognizer:
             variance = cv2.Laplacian(gray, cv2.CV_64F).var()
             print(f"[OCR] Sharpness: {variance:.2f}")
             
-            # Upscale for better OCR (target 900px width for balance of speed/accuracy)
-            if gray.shape[1] < 900:
-                scale = 900.0 / gray.shape[1]
+            # Upscale for OCR with speed-oriented target width
+            target_width = max(320, int(self.cfg.ocr_target_width_px))
+            if gray.shape[1] < target_width:
+                scale = target_width / gray.shape[1]
                 new_w = int(gray.shape[1] * scale)
                 new_h = int(gray.shape[0] * scale)
                 gray = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
                 print(f"[OCR] Upscaled to {new_w}x{new_h}px")
             
-            # Apply adaptive threshold directly (skip blur for speed)
-            binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                          cv2.THRESH_BINARY, 21, 10)
-            
-            # Save preprocessed images
-            cv2.imwrite(str(Path("captures") / f"debug_gray_{debug_ts}.jpg"), gray)
-            cv2.imwrite(str(Path("captures") / f"debug_preprocessed_{debug_ts}.jpg"), binary)
+            # Lightweight preprocessing for faster OCR
+            binary = cv2.adaptiveThreshold(
+                gray,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                15,
+                8,
+            )
+
+            if self.cfg.ocr_debug_images:
+                debug_ts = datetime.now(timezone.utc).strftime('%H%M%S')
+                cv2.imwrite(str(Path("captures") / f"debug_gray_{debug_ts}.jpg"), gray)
+                cv2.imwrite(str(Path("captures") / f"debug_preprocessed_{debug_ts}.jpg"), binary)
             
             # Run EasyOCR on preprocessed image
             try:
-                results = self._reader.readtext(binary)
+                results = self._reader.readtext(
+                    binary,
+                    decoder='greedy',
+                    beamWidth=1,
+                    batch_size=1,
+                    workers=0,
+                    paragraph=False,
+                    detail=1,
+                )
                 print(f"[OCR] EasyOCR found {len(results)} text regions")
                 
                 if not results:
