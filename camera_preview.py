@@ -79,6 +79,9 @@ class CameraPreview:
             self.roi = cfg.name_roi  # (x1, y1, x2, y2)
         except:
             self.roi = (0.08, 0.08, 0.92, 0.22)  # Default fallback
+
+        # Expand ROI in preview to show a larger OCR region
+        self.roi = self._expand_roi(self.roi, scale=1.5)
         
         # Create GUI
         self._build_layout()
@@ -150,6 +153,32 @@ class CameraPreview:
         
         ttk.Button(control_frame, text="Close", command=self.stop_preview).pack(side=tk.LEFT)
     
+    def _expand_roi(self, roi, scale=1.5):
+        """Expand ROI by scale around its center, keep inside [0,1]"""
+        x1, y1, x2, y2 = roi
+        width = x2 - x1
+        height = y2 - y1
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+
+        new_width = min(1.0, width * scale)
+        new_height = min(1.0, height * scale)
+
+        nx1 = max(0.0, cx - new_width / 2.0)
+        nx2 = min(1.0, cx + new_width / 2.0)
+        ny1 = max(0.0, cy - new_height / 2.0)
+        ny2 = min(1.0, cy + new_height / 2.0)
+
+        # If clamped at boundary, recenter inside the window
+        if nx2 - nx1 < new_width:
+            nx1 = max(0.0, min(1.0 - new_width, nx1))
+            nx2 = nx1 + new_width
+        if ny2 - ny1 < new_height:
+            ny1 = max(0.0, min(1.0 - new_height, ny1))
+            ny2 = ny1 + new_height
+
+        return (nx1, ny1, nx2, ny2)
+
     def start_preview(self):
         """Start the camera preview thread"""
         self.running = True
