@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Jtsii93 is login pass is Manasorter98!
+# Jtsii93 is login pass is Manasorter98! for vnc
 import csv
 import json
 import math
